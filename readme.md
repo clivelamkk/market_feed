@@ -58,3 +58,7 @@ print(f"BTC Price: {snapshot.index_prices.get('BTC_USDC')}")
     }
 ]
 ```
+
+### License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
