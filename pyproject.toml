@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market_feed"
+version = "0.1.0"
+description = "A modular multi-exchange data feed manager"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "Clive Lam", email = "clivelamkk@gmail.com"}
+]
+dependencies = [
+  "websocket-client",
+  "requests",
+  "numpy"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
