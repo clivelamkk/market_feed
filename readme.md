@@ -25,7 +25,7 @@ pip install git+https://github.com/clivelamkk/market_feed.git
 ```
 
 ### Usage
-## Basic Initialization
+Basic Initialization
 
 ```
 from market_feed import FeedManager
