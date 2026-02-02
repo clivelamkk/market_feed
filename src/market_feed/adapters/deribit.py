@@ -69,6 +69,17 @@ class DeribitAdapter(ExchangeAdapter):
             pass
         return 0.0
 
+    def get_reference_tickers(self, tab_config) -> list:
+        base = tab_config['base_symbol']
+        is_usd = tab_config['settlement'] == 'usd'
+        
+        if is_usd:
+            # For USD settlement, we watch the USDC Pair and Linear Perp
+            return [f"{base}_USDC", f"{base}_USDC-PERPETUAL"]
+        else:
+            # For Coin settlement, we watch the Inverse Perp and maybe USD index
+            return [f"{base}-PERPETUAL", f"{base}_USDC"]
+    
     def subscribe(self, channels):
         if self.ws and self.ws.sock and self.ws.sock.connected:
             msg = {

@@ -1,0 +1,14 @@
+[
+    {
+        "tab_name": "BTC_DERIBIT",
+        "base_symbol": "BTC",
+        "settlement": "coin",
+        "source": "deribit"
+    },
+    {
+        "tab_name": "BTC_USDC",
+        "base_symbol": "BTC",
+        "settlement": "usd",
+        "source": "deribit"
+    }
+]   
