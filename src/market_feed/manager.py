@@ -6,7 +6,7 @@ from typing import Dict, List, Any, Optional
 
 from .base import MarketSnapshot, ExchangeAdapter
 from .adapters.deribit import DeribitAdapter
-from .adapters.bloomberg import BloombergAdapter
+# from .adapters.bloomberg import BloombergAdapter
 
 class FeedManager:
     def __init__(self, config_path="market_config.json", keys_path="keys.json", api_keys=None):
@@ -19,7 +19,8 @@ class FeedManager:
         self._instruments_by_tab: Dict[str, List[dict]] = {}
         self._instrument_sets: Dict[str, set] = {}
         
-        self._keys = api_keys if api_keys else self._load_keys_from_file()
+        # self._keys = api_keys if api_keys else self._load_keys_from_file()
+        self._keys = api_keys if api_keys is not None else self._load_keys_from_file()
         self._market_config = self._load_config()
         
         for cfg in self._market_config:
@@ -55,10 +56,14 @@ class FeedManager:
             
         if 'bloomberg' in active_sources:
             try:
+                from .adapters.bloomberg import BloombergAdapter
                 self.adapters['bloomberg'] = BloombergAdapter(self)
                 print("[FeedManager] Bloomberg Adapter Initialized.")
-            except ImportError:
-                print("❌ Error: 'blpapi' library not found. Cannot start Bloomberg adapter.")
+            except ImportError as e:
+                # This catches the error raised by bloomberg.py if blpapi is missing
+                print(f"[FeedManager] Skipping Bloomberg: {e}")
+            except Exception as e:
+                print(f"[FeedManager] Error initializing Bloomberg: {e}")
 
     def get_subscription_map(self, tab_name, target_dates, min_pct, max_pct):
         cfg = next((c for c in self._market_config if c['tab_name'] == tab_name), None)
@@ -87,7 +92,8 @@ class FeedManager:
             # Start subscription list with the reference tickers
             # (Note: Adapter specific prefix 'ticker.' is still here, 
             # ideally that should also be in adapter, but this is acceptable for now)
-            subs_to_send = [f"ticker.{t}.100ms" for t in ref_tickers]
+            # subs_to_send = [f"ticker.{t}.100ms" for t in ref_tickers]
+            subs_to_send = list(ref_tickers)
             structure = {}
 
             for inst in self._instruments_by_tab.get(tab_name, []):
@@ -105,7 +111,8 @@ class FeedManager:
                         structure[date]['strikes'].append(k)
                     
                     structure[date]['map'][k][kind] = nm
-                    subs_to_send.append(f"ticker.{nm}.100ms")
+                    # subs_to_send.append(f"ticker.{nm}.100ms")
+                    subs_to_send.append(nm)
 
             for d in structure: structure[d]['strikes'].sort()
             
@@ -198,14 +205,18 @@ class FeedManager:
                 if px > 0: self._index_prices[nm] = px
 
     def on_adapter_reconnect(self, source_name): pass
+
     def _load_keys_from_file(self):
-        if os.path.exists(self.keys_path):
+        if self.keys_path and os.path.exists(self.keys_path):
+        # if os.path.exists(self.keys_path):
             try:
                 with open(self.keys_path, 'r') as f: return json.load(f)
             except: pass
         return {}
+    
+    
     def _load_config(self):
-        if os.path.exists(self.config_path):
+        if self.config_path and os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r') as f: return json.load(f)
             except: pass

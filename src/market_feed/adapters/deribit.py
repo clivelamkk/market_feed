@@ -80,7 +80,10 @@ class DeribitAdapter(ExchangeAdapter):
             # For Coin settlement, we watch the Inverse Perp and maybe USD index
             return [f"{base}-PERPETUAL", f"{base}_USDC"]
     
-    def subscribe(self, channels):
+    def subscribe(self, instruments: list):
+        # We format the channel strings here, specific to Deribit
+        channels = [f"ticker.{i}.100ms" for i in instruments]
+
         if self.ws and self.ws.sock and self.ws.sock.connected:
             msg = {
                 "jsonrpc": "2.0",
