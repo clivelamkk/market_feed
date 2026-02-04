@@ -135,6 +135,7 @@ class BloombergAdapter(ExchangeAdapter):
         if not self.session or not HAS_BLPAPI: return
         
         subs = blpapi.SubscriptionList()
+        count = 0  # <--- Track how many we actually add
         for app_ticker in instruments:
             # 1. Translate Manager Name -> Bloomberg Name
             bbg_ticker = self._convert_to_bbg(app_ticker)
@@ -146,9 +147,12 @@ class BloombergAdapter(ExchangeAdapter):
                 
                 subs.add(bbg_ticker, "LAST_PRICE,BID,ASK,SIZE_BID,SIZE_ASK", correlationId=cid)
                 self.active_subscriptions.add(bbg_ticker)
+                count += 1 # <--- Increment
         
-        try: self.session.subscribe(subs)
-        except: pass
+        # FIX: Only send request if we actually have new topics
+        if count > 0:
+            try: self.session.subscribe(subs)
+            except: pass
 
     # --- TRANSLATION LOGIC ---
 
