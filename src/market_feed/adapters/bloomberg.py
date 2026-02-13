@@ -20,21 +20,23 @@ class BloombergAdapter(ExchangeAdapter):
     """
     def __init__(self, manager):
         super().__init__(manager)
-        if not HAS_BLPAPI:
-            print("[Bloomberg] Warning: 'blpapi' not installed. Adapter disabled.")
-            return
-
+        
         self.name = "bloomberg"
         self.session = None
         self._stop_event = threading.Event()
         self.active_subscriptions = set()
         
-        # REGEX: Matches "SPY US 02/20/26 C688 Equity"
+        # REGEX: Matches "SPY US 02/20/26 C688 Equity" or "SPX US ... Index"
         # Group 1: Symbol (SPY)
         # Group 2: Date (02/20/26)
         # Group 3: Type (C)
         # Group 4: Strike (688)
-        self.bbg_regex = re.compile(r"^(\w+)\s+\w+\s+(\d{1,2}/\d{1,2}/\d{2})\s+([CP])([\d\.]+)\s+Equity$")
+        # Group 5: Asset Class (Equity/Index)
+        self.bbg_regex = re.compile(r"^(\w+)\s+\w+\s+(\d{1,2}/\d{1,2}/\d{2})\s+([CP])([\d\.]+)\s+(Equity|Index)$")
+
+        if not HAS_BLPAPI:
+            print("[Bloomberg] Warning: 'blpapi' not installed. Adapter disabled.")
+            return
 
     def start(self):
         if not HAS_BLPAPI: return
@@ -90,8 +92,11 @@ class BloombergAdapter(ExchangeAdapter):
         if not HAS_BLPAPI: return []
         
         base = tab_config['base_symbol']
-        # Construct the root ticker for chain lookup (e.g. "SPY US Equity")
-        root_ticker = f"{base} US Equity"
+        # Smartly construct root ticker
+        if " " in base:
+            root_ticker = base
+        else:
+            root_ticker = f"{base} US Equity"
         
         print(f"[Bloomberg] Fetching chain for {root_ticker}...")
         results = []
@@ -178,7 +183,7 @@ class BloombergAdapter(ExchangeAdapter):
         match = self.bbg_regex.match(bbg_ticker)
         if not match: return None
         
-        sym, date_str, kind, strike_str = match.groups()
+        sym, date_str, kind, strike_str, _ = match.groups()
         
         try:
             # Parse Date: 02/20/26 -> datetime

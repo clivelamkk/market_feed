@@ -142,7 +142,11 @@ class FeedManager:
     def start_stream(self):
         for a in self.adapters.values(): a.start()
     def stop_stream(self):
-        for a in self.adapters.values(): a.stop()
+        for name, adapter in self.adapters.items():
+            try:
+                adapter.stop()
+            except Exception as e:
+                print(f"[FeedManager] Error stopping {name}: {e}")
     @property
     def market_config(self): return self._market_config
     @property
