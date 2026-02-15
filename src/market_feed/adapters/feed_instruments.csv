@@ -1,0 +1,17 @@
+Symbol,bloomberg,deribit
+SPX,Index,
+NDX,Index,
+VIX,Index,
+RTY,Index,
+ES,FuturePrefix,
+NQ,FuturePrefix,
+YM,FuturePrefix,
+VX,FuturePrefix,
+TENCENT,Exact:0700 HK Equity,
+BTC.USDC,,Exact:BTC_USDC
+BTC.USDT,,Exact:BTC_USDT
+BTC,Exact:XBTUSD Curncy,Exact:BTC_USDC
+BTC.PERP,Exact:XBTUSD Curncy,Exact:BTC-PERPETUAL
+ETH.USDC,,Exact:ETH_USDC
+ETH,Exact:ETHUSD Curncy,Exact:ETH_USDC
+ETH.PERP,Exact:ETHUSD Curncy,Exact:ETH-PERPETUAL

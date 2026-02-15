@@ -1,6 +1,8 @@
 import threading
 import time
 import re
+import csv
+import os
 from datetime import datetime
 from ..base import ExchangeAdapter
 
@@ -33,10 +35,57 @@ class BloombergAdapter(ExchangeAdapter):
         # Group 4: Strike (688)
         # Group 5: Asset Class (Equity/Index)
         self.bbg_regex = re.compile(r"^(\w+)\s+\w+\s+(\d{1,2}/\d{1,2}/\d{2})\s+([CP])([\d\.]+)\s+(Equity|Index)$")
+        
+        # REGEX: Matches Underlyings like "SPY US Equity", "0700 HK Equity"
+        # Group 1: Symbol (SPY, 0700)
+        self.bbg_underlying_regex = re.compile(r"^(\w+)\s+(?:\w+\s+)?(Equity|Index|Comdty)$")
+
+        # --- CONFIGURATION TABLES ---
+        # 1. Exact Match: These are Indices (Suffix: Index)
+        self.index_tickers = {
+            "SPX", "NDX", "VIX", "RTY", "HSI", "NKY", "UKX", "CAC", "DAX", "SX5E"
+        }
+        # --- CONFIGURATION ---
+        self.exact_map = {}       # Symbol -> Full Bloomberg Ticker
+        self.index_tickers = set() # Symbols that get " Index" suffix
+        self.future_prefixes = set() # Prefixes for futures logic
+        
+        self._load_config()
 
         if not HAS_BLPAPI:
             print("[Bloomberg] Warning: 'blpapi' not installed. Adapter disabled.")
             return
+
+    def _load_config(self):
+        """Loads feed_instruments.csv and looks for column 'bloomberg'."""
+        csv_path = os.path.join(os.path.dirname(__file__), 'feed_instruments.csv')
+        if not os.path.exists(csv_path):
+            # Defaults if file missing
+            self.index_tickers = {"SPX", "NDX", "VIX", "RTY", "HSI", "NKY", "UKX", "CAC", "DAX", "SX5E"}
+            self.future_prefixes = {"ES", "NQ", "YM", "QR", "HI", "NK", "VG", "GX", "JB", "RX", "VX"}
+            return
+
+        try:
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                # Check if our column exists
+                if self.name not in reader.fieldnames:
+                    return
+
+                for row in reader:
+                    sym = row['Symbol'].strip()
+                    val = row.get(self.name, '').strip()
+                    
+                    if not val: continue
+
+                    if val.lower() == 'index':
+                        self.index_tickers.add(sym)
+                    elif val.lower() == 'futureprefix':
+                        self.future_prefixes.add(sym)
+                    elif val.lower().startswith('exact:'):
+                        self.exact_map[sym] = val.split(':', 1)[1].strip()
+        except Exception as e:
+            print(f"[Bloomberg] Error loading config: {e}")
 
     def start(self):
         if not HAS_BLPAPI: return
@@ -88,15 +137,12 @@ class BloombergAdapter(ExchangeAdapter):
         
         return price
 
-    def get_instruments(self, tab_config) -> list:
+    def get_option_chain(self, tab_config) -> list:
         if not HAS_BLPAPI: return []
         
         base = tab_config['base_symbol']
         # Smartly construct root ticker
-        if " " in base:
-            root_ticker = base
-        else:
-            root_ticker = f"{base} US Equity"
+        root_ticker = self._convert_to_bbg(base)
         
         print(f"[Bloomberg] Fetching chain for {root_ticker}...")
         results = []
@@ -163,13 +209,33 @@ class BloombergAdapter(ExchangeAdapter):
 
     def _convert_to_bbg(self, name):
         """Smart router to convert any App name to Bloomberg format."""
+        # 0. Exact Map Override (Highest Priority)
+        # Handles cases like "TENCENT" -> "0700 HK Equity" defined in CSV
+        if name in self.exact_map:
+            return self.exact_map[name]
+
         # Case A: Complex Option "SPY-20FEB26-688-C"
         if "-" in name:
             return self._to_bbg_option_ticker(name)
         
-        # Case B: Simple Equity "SPY" -> "SPY US Equity"
-        # Prevents "SPY" from failing in get_latest_price
+        # Case B: International Equity "0700.HK" -> "0700 HK Equity"
+        if "." in name:
+            parts = name.rsplit('.', 1)
+            if len(parts) == 2:
+                return f"{parts[0]} {parts[1]} Equity"
+
+        # Case C: Simple Ticker
         if " " not in name:
+            # 1. Exact Index Match
+            if name in self.index_tickers:
+                return f"{name} Index"
+            
+            # 2. Future Prefix Match (Must end in digit, e.g. ESU6)
+            for prefix in self.future_prefixes:
+                if name.startswith(prefix) and name[-1].isdigit():
+                    return f"{name} Index"
+            
+            # 3. Default to US Equity
             return f"{name} US Equity"
             
         # Case C: Already Bloomberg format (fallback)
@@ -181,27 +247,38 @@ class BloombergAdapter(ExchangeAdapter):
         Output: { instrument_name: SPY-20FEB26-688-C, ... }
         """
         match = self.bbg_regex.match(bbg_ticker)
-        if not match: return None
+        if match:
+            sym, date_str, kind, strike_str, _ = match.groups()
+            
+            try:
+                # Parse Date: 02/20/26 -> datetime
+                dt = datetime.strptime(date_str, "%m/%d/%y")
+                # Format Date: 20FEB26 (Standard App Format)
+                app_date = dt.strftime("%d%b%y").upper()
+                exp_ts = dt.timestamp() * 1000
+            except: return None
+            
+            # Construct the Clean Name
+            app_name = f"{sym}-{app_date}-{float(strike_str):g}-{kind}"
+            
+            return {
+                "instrument_name": app_name,
+                "expiration_timestamp": exp_ts,
+                "base_currency": sym,
+                "quote_currency": "USD"
+            }
         
-        sym, date_str, kind, strike_str, _ = match.groups()
-        
-        try:
-            # Parse Date: 02/20/26 -> datetime
-            dt = datetime.strptime(date_str, "%m/%d/%y")
-            # Format Date: 20FEB26 (Standard App Format)
-            app_date = dt.strftime("%d%b%y").upper()
-            exp_ts = dt.timestamp() * 1000
-        except: return None
-        
-        # Construct the Clean Name
-        app_name = f"{sym}-{app_date}-{float(strike_str):g}-{kind}"
-        
-        return {
-            "instrument_name": app_name,
-            "expiration_timestamp": exp_ts,
-            "base_currency": sym,
-            "quote_currency": "USD"
-        }
+        # Fallback: Try to parse as Underlying (SPY US Equity -> SPY)
+        match_und = self.bbg_underlying_regex.match(bbg_ticker)
+        if match_und:
+            sym = match_und.group(1)
+            return {
+                "instrument_name": sym,
+                "base_currency": sym,
+                "quote_currency": "USD"
+            }
+            
+        return None
 
     def _to_bbg_option_ticker(self, app_ticker):
         """

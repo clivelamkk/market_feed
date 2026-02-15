@@ -30,7 +30,7 @@ class ExchangeAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_instruments(self, tab_config) -> List[dict]:
+    def get_option_chain(self, tab_config) -> List[dict]:
         """
         Synchronously fetch instruments via HTTP for initialization.
         """

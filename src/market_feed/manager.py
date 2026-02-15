@@ -181,7 +181,7 @@ class FeedManager:
             source = cfg.get('source', 'deribit').lower()
             adapter = self.adapters.get(source)
             if not adapter: continue
-            instruments = adapter.get_instruments(cfg)
+            instruments = adapter.get_option_chain(cfg)
             tab = cfg['tab_name']
             with self._lock:
                 for inst in instruments:

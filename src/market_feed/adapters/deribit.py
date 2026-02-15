@@ -3,6 +3,8 @@ import json
 import threading
 import time
 import requests
+import csv
+import os
 from ..base import ExchangeAdapter
 
 class DeribitAdapter(ExchangeAdapter):
@@ -16,6 +18,31 @@ class DeribitAdapter(ExchangeAdapter):
         self.api_secret = api_secret
         self.ws = None
         self._stop_event = threading.Event()
+        
+        self.exact_map = {}   # Internal -> External (BTC -> BTC_USDC)
+        self.reverse_map = {} # External -> Internal (BTC_USDC -> BTC)
+        self._load_config()
+
+    def _load_config(self):
+        """Loads feed_instruments.csv and looks for column 'deribit'."""
+        csv_path = os.path.join(os.path.dirname(__file__), 'feed_instruments.csv')
+        if not os.path.exists(csv_path): return
+
+        try:
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                if self.name not in reader.fieldnames: return
+
+                for row in reader:
+                    sym = row['Symbol'].strip()
+                    val = row.get(self.name, '').strip()
+                    
+                    if val.lower().startswith('exact:'):
+                        external = val.split(':', 1)[1].strip()
+                        self.exact_map[sym] = external
+                        self.reverse_map[external] = sym
+        except Exception as e:
+            print(f"[{self.name}] Config Error: {e}")
 
     def start(self):
         t = threading.Thread(target=self._ws_loop, daemon=True)
@@ -25,8 +52,8 @@ class DeribitAdapter(ExchangeAdapter):
         self._stop_event.set()
         if self.ws: self.ws.close()
 
-    def get_instruments(self, tab_config) -> list:
-        """Fetch instruments using Deribit's specific API parameters."""
+    def get_option_chain(self, tab_config) -> list:
+        """Fetch option chain using Deribit's specific API parameters."""
         base = tab_config['base_symbol']
         settlement = tab_config['settlement']
         
@@ -59,7 +86,8 @@ class DeribitAdapter(ExchangeAdapter):
     def get_latest_price(self, instrument_name: str) -> float:
         """Fetch a specific ticker price via REST."""
         try:
-            url = f"{self.HTTP_URL}/public/ticker?instrument_name={instrument_name}"
+            target = self.exact_map.get(instrument_name, instrument_name)
+            url = f"{self.HTTP_URL}/public/ticker?instrument_name={target}"
             resp = requests.get(url, timeout=5)
             if resp.status_code == 200:
                 data = resp.json().get('result', {})
@@ -82,7 +110,9 @@ class DeribitAdapter(ExchangeAdapter):
     
     def subscribe(self, instruments: list):
         # We format the channel strings here, specific to Deribit
-        channels = [f"ticker.{i}.100ms" for i in instruments]
+        # Map Internal Code (BTC) -> External Code (BTC_USDC)
+        mapped = [self.exact_map.get(i, i) for i in instruments]
+        channels = [f"ticker.{i}.100ms" for i in mapped]
 
         if self.ws and self.ws.sock and self.ws.sock.connected:
             msg = {
@@ -128,4 +158,10 @@ class DeribitAdapter(ExchangeAdapter):
         except: return
         
         if 'params' in d:
-            self.manager.ingest_ticker(d['params']['data'])
+            data = d['params']['data']
+            # Reverse Map: External (BTC_USDC) -> Internal (BTC)
+            raw_name = data.get('instrument_name')
+            if raw_name in self.reverse_map:
+                data['instrument_name'] = self.reverse_map[raw_name]
+            
+            self.manager.ingest_ticker(data)
