@@ -25,8 +25,12 @@ class BloombergAdapter(ExchangeAdapter):
         
         self.name = "bloomberg"
         self.session = None
+        self.thread = None
         self._stop_event = threading.Event()
         self.active_subscriptions = set()
+        
+        # Fields to request (standardized for Market Data)
+        self.SUBSCRIBE_FIELDS = "LAST_PRICE,BID,ASK,BID_SIZE,ASK_SIZE"
         
         # REGEX: Matches "SPY US 02/20/26 C688 Equity" or "SPX US ... Index"
         # Group 1: Symbol (SPY)
@@ -49,6 +53,12 @@ class BloombergAdapter(ExchangeAdapter):
         self.exact_map = {}       # Symbol -> Full Bloomberg Ticker
         self.index_tickers = set() # Symbols that get " Index" suffix
         self.future_prefixes = set() # Prefixes for futures logic
+        self.pending_subscriptions = {} # Cache for re-subscription (AppTicker -> BBGTicker)
+        
+        # --- CID MAPPING (Fix for Pointer/String Issues) ---
+        self._cid_map = {}      # int -> AppTicker (e.g. 1 -> "SPY")
+        self._next_cid = 1
+        self._cid_lock = threading.Lock()
         
         self._load_config()
 
@@ -89,16 +99,17 @@ class BloombergAdapter(ExchangeAdapter):
 
     def start(self):
         if not HAS_BLPAPI: return
-        t = threading.Thread(target=self._run_session, daemon=True)
-        t.start()
+        if self.thread and self.thread.is_alive(): return
+        self.thread = threading.Thread(target=self._run_session, daemon=True)
+        self.thread.start()
 
     def stop(self):
         self._stop_event.set()
         if self.session: self.session.stop()
 
-    def get_reference_tickers(self, tab_config) -> list:
+    def get_reference_tickers(self, undl_config) -> list:
         # Keep it clean: The Manager expects "SPX" or "SPY", not "SPX US Equity"
-        return [tab_config['base_symbol']]
+        return [undl_config['base_symbol']]
 
     def get_latest_price(self, instrument_name: str) -> float:
         """
@@ -137,10 +148,10 @@ class BloombergAdapter(ExchangeAdapter):
         
         return price
 
-    def get_option_chain(self, tab_config) -> list:
+    def get_option_chain(self, undl_config) -> list:
         if not HAS_BLPAPI: return []
         
-        base = tab_config['base_symbol']
+        base = undl_config['base_symbol']
         # Smartly construct root ticker
         root_ticker = self._convert_to_bbg(base)
         
@@ -183,27 +194,48 @@ class BloombergAdapter(ExchangeAdapter):
         return results
 
     def subscribe(self, instruments: list):
-        if not self.session or not HAS_BLPAPI: return
+        if not HAS_BLPAPI: return
         
         subs = blpapi.SubscriptionList()
         count = 0  # <--- Track how many we actually add
+        to_add = [] # <--- Track tickers to mark as active ONLY on success
+        
         for app_ticker in instruments:
             # 1. Translate Manager Name -> Bloomberg Name
             bbg_ticker = self._convert_to_bbg(app_ticker)
             
-            if bbg_ticker and bbg_ticker not in self.active_subscriptions:
-                # 2. Attach the APP TICKER as the Correlation ID
-                # This ensures when data comes back, it is tagged with YOUR format.
-                cid = blpapi.CorrelationId(app_ticker)
+            if bbg_ticker:
+                # Cache it (App -> BBG)
+                self.pending_subscriptions[app_ticker] = bbg_ticker
                 
-                subs.add(bbg_ticker, "LAST_PRICE,BID,ASK,SIZE_BID,SIZE_ASK", correlationId=cid)
-                self.active_subscriptions.add(bbg_ticker)
-                count += 1 # <--- Increment
+                # Check if already active in *this* session
+                if bbg_ticker not in self.active_subscriptions:
+                    print(f"[Bloomberg] Subscribing: {app_ticker} -> {bbg_ticker}")
+                    
+                    # 2. Attach an INTEGER ID as the Correlation ID (Fix for pointer issues)
+                    with self._cid_lock:
+                        cid_val = self._next_cid
+                        self._next_cid += 1
+                        self._cid_map[cid_val] = app_ticker
+                        
+                    cid = blpapi.CorrelationId(cid_val)
+                    subs.add(bbg_ticker, self.SUBSCRIBE_FIELDS, correlationId=cid)
+                    to_add.append(bbg_ticker)
+                    count += 1
         
-        # FIX: Only send request if we actually have new topics
+        # FIX: Only send request if we actually have new topics AND session is ready
         if count > 0:
-            try: self.session.subscribe(subs)
-            except: pass
+            if self.session:
+                try: 
+                    print(f"[Bloomberg] Subscribing to {count} tickers...")
+                    self.session.subscribe(subs)
+                    # Mark as active only after sending
+                    for t in to_add:
+                        self.active_subscriptions.add(t)
+                except Exception as e:
+                    print(f"[Bloomberg] Subscription Failed: {e}")
+            else:
+                print(f"[Bloomberg] Session not ready. Queued {count} tickers.")
 
     # --- TRANSLATION LOGIC ---
 
@@ -303,20 +335,62 @@ class BloombergAdapter(ExchangeAdapter):
         options.setServerHost("localhost")
         options.setServerPort(8194)
         self.session = blpapi.Session(options)
+        
+        # IMPORTANT: Clear active subscriptions because this is a NEW session
+        self.active_subscriptions.clear()
+        
         if not self.session.start(): return
         if not self.session.openService("//blp/mktdata"): return
         self.connected = True
         
+        # Resubscribe to everything in cache
+        if self.pending_subscriptions:
+            print(f"[Bloomberg] Resubscribing to {len(self.pending_subscriptions)} tickers.")
+            subs = blpapi.SubscriptionList()
+            count = 0
+            for app_ticker, bbg_ticker in self.pending_subscriptions.items():
+                if bbg_ticker not in self.active_subscriptions:
+                    # cid = blpapi.CorrelationId(app_ticker)
+                    with self._cid_lock:
+                        cid_val = self._next_cid
+                        self._next_cid += 1
+                        self._cid_map[cid_val] = app_ticker
+                        
+                    cid = blpapi.CorrelationId(cid_val)
+                    subs.add(bbg_ticker, self.SUBSCRIBE_FIELDS, correlationId=cid)
+                    self.active_subscriptions.add(bbg_ticker)
+                    count += 1
+            
+            if count > 0:
+                try: self.session.subscribe(subs)
+                except: pass
+            
         while not self._stop_event.is_set():
             event = self.session.nextEvent(100)
             if event.eventType() == blpapi.Event.SUBSCRIPTION_DATA:
                 for msg in event:
                     self._handle_msg(msg)
+            elif event.eventType() == blpapi.Event.SUBSCRIPTION_STATUS:
+                for msg in event:
+                    if msg.hasElement("reason"):
+                        try:
+                            with open("feed_debug.log", "a") as f:
+                                import datetime
+                                t = datetime.datetime.now().strftime("%H:%M:%S")
+                                f.write(f"[{t}] [Bloomberg] Subscription Status: {msg}\n")
+                        except: pass
 
     def _handle_msg(self, msg):
-        # MAGIC: We retrieve the App Ticker from the correlation ID.
-        # This guarantees the Manager receives "SPY-20FEB..." and not "SPY US..."
-        app_ticker = msg.correlationId().value()
+        # MAGIC: We retrieve the App Ticker from the correlation ID map.
+        # This guarantees reliable ticker retrieval regardless of blpapi pointer/string behavior.
+        cid_val = msg.correlationId().value()
+        app_ticker = self._cid_map.get(cid_val)
+        
+        if not app_ticker:
+            # Maybe it is a raw value if something went wrong? Just in case.
+            # But normally we rely on map.
+            return
+        
         
         def get_f(f): return msg.getElementAsFloat(f) if msg.hasElement(f) else None
         
@@ -325,10 +399,11 @@ class BloombergAdapter(ExchangeAdapter):
             'last_price': get_f("LAST_PRICE"),
             'best_bid_price': get_f("BID"),
             'best_ask_price': get_f("ASK"),
-            'best_bid_amount': get_f("SIZE_BID"),
-            'best_ask_amount': get_f("SIZE_ASK"),
+            'best_bid_amount': get_f("BID_SIZE"),
+            'best_ask_amount': get_f("ASK_SIZE"),
             'timestamp': time.time() * 1000
         }
-        # Only ingest if we have valid data
-        if data['last_price'] or data['best_bid_price']:
+        # Only ingest if we have valid data (at least one field is not None)
+        # We check specific market data fields to avoid noise
+        if any(data[k] is not None for k in ['last_price', 'best_bid_price', 'best_ask_price', 'best_bid_amount', 'best_ask_amount']):
             self.manager.ingest_ticker(data)

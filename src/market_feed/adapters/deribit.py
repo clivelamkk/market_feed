@@ -17,10 +17,12 @@ class DeribitAdapter(ExchangeAdapter):
         self.api_id = api_id
         self.api_secret = api_secret
         self.ws = None
+        self.thread = None
         self._stop_event = threading.Event()
         
         self.exact_map = {}   # Internal -> External (BTC -> BTC_USDC)
         self.reverse_map = {} # External -> Internal (BTC_USDC -> BTC)
+        self.wanted_channels = set()
         self._load_config()
 
     def _load_config(self):
@@ -45,17 +47,18 @@ class DeribitAdapter(ExchangeAdapter):
             print(f"[{self.name}] Config Error: {e}")
 
     def start(self):
-        t = threading.Thread(target=self._ws_loop, daemon=True)
-        t.start()
+        if self.thread and self.thread.is_alive(): return
+        self.thread = threading.Thread(target=self._ws_loop, daemon=True)
+        self.thread.start()
 
     def stop(self):
         self._stop_event.set()
         if self.ws: self.ws.close()
 
-    def get_option_chain(self, tab_config) -> list:
+    def get_option_chain(self, undl_config) -> list:
         """Fetch option chain using Deribit's specific API parameters."""
-        base = tab_config['base_symbol']
-        settlement = tab_config['settlement']
+        base = undl_config['base_symbol']
+        settlement = undl_config['settlement']
         
         # Deribit uses 'USDC' as currency param for USD-settled options
         api_currency = base if settlement == 'coin' else "USDC"
@@ -97,16 +100,20 @@ class DeribitAdapter(ExchangeAdapter):
             pass
         return 0.0
 
-    def get_reference_tickers(self, tab_config) -> list:
-        base = tab_config['base_symbol']
-        is_usd = tab_config['settlement'] == 'usd'
+    def get_reference_tickers(self, undl_config) -> list:
+        base = undl_config['base_symbol']
+        is_usd = undl_config['settlement'] == 'usd'
         
+        tickers = []
         if is_usd:
             # For USD settlement, we watch the USDC Pair and Linear Perp
-            return [f"{base}_USDC", f"{base}_USDC-PERPETUAL"]
+            tickers = [f"{base}_USDC", f"{base}_USDC-PERPETUAL"]
         else:
             # For Coin settlement, we watch the Inverse Perp and maybe USD index
-            return [f"{base}-PERPETUAL", f"{base}_USDC"]
+            tickers = [f"{base}-PERPETUAL", f"{base}_USDC"]
+            
+        # Return internal names if available
+        return [self.reverse_map.get(t, t) for t in tickers]
     
     def subscribe(self, instruments: list):
         # We format the channel strings here, specific to Deribit
@@ -114,7 +121,11 @@ class DeribitAdapter(ExchangeAdapter):
         mapped = [self.exact_map.get(i, i) for i in instruments]
         channels = [f"ticker.{i}.100ms" for i in mapped]
 
-        if self.ws and self.ws.sock and self.ws.sock.connected:
+        # Add to desired set (idempotent)
+        for c in channels:
+            self.wanted_channels.add(c)
+
+        if self.connected and self.ws and self.ws.sock and self.ws.sock.connected:
             msg = {
                 "jsonrpc": "2.0",
                 "method": "public/subscribe",
@@ -151,12 +162,30 @@ class DeribitAdapter(ExchangeAdapter):
             except: pass
         
         self.connected = True
+        
+        # Resubscribe to everything we want
+        if self.wanted_channels:
+            print(f"[{self.name}] Resubscribing to {len(self.wanted_channels)} channels.")
+            msg = {
+                "jsonrpc": "2.0",
+                "method": "public/subscribe",
+                "id": 100,
+                "params": {"channels": list(self.wanted_channels)}
+            }
+            try: ws.send(json.dumps(msg))
+            except Exception as e: print(f"[{self.name}] Resub fail: {e}")
+
         self.manager.on_adapter_reconnect(self.name)
 
     def _on_message(self, ws, msg):
         try: d = json.loads(msg)
         except: return
         
+        # Log Subscription Responses
+        if 'result' in d and 'id' in d:
+            print(f"[{self.name}] Msg ID {d['id']} Result: {d['result']}")
+            return
+
         if 'params' in d:
             data = d['params']['data']
             # Reverse Map: External (BTC_USDC) -> Internal (BTC)
@@ -164,4 +193,5 @@ class DeribitAdapter(ExchangeAdapter):
             if raw_name in self.reverse_map:
                 data['instrument_name'] = self.reverse_map[raw_name]
             
+            # print(f"[{self.name}] Ingesting: {data.get('instrument_name')}")
             self.manager.ingest_ticker(data)

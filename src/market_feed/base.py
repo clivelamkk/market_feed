@@ -9,7 +9,7 @@ class MarketSnapshot:
     index_prices: Dict[str, float]
     tickers: Dict[str, Any]
     config: List[Dict]
-    instruments_by_tab: Dict[str, List[dict]]
+    instruments_by_undl: Dict[str, List[dict]]
 
 class ExchangeAdapter(ABC):
     """
@@ -30,7 +30,7 @@ class ExchangeAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_option_chain(self, tab_config) -> List[dict]:
+    def get_option_chain(self, undl_config) -> List[dict]:
         """
         Synchronously fetch instruments via HTTP for initialization.
         """
@@ -50,10 +50,10 @@ class ExchangeAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_reference_tickers(self, tab_config) -> List[str]:
+    def get_reference_tickers(self, undl_config) -> List[str]:
         """
         Returns a list of symbols (Index, Spot, Perp) that serve as 
-        the underlying price reference for a given tab configuration.
+        the underlying price reference for a given undl configuration.
         Example: ['BTC-PERPETUAL', 'BTC_USDC']
         """
         pass

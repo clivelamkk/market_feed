@@ -27,20 +27,28 @@ pip install git+https://github.com/clivelamkk/market_feed.git
 ### Usage
 Basic Initialization
 
-```
+```python
 from market_feed import FeedManager
 
-# Option 1: Pass paths to config files
-feed = FeedManager(config_path="config/market_config.json", keys_path="config/keys.json")
+# 1. Initialize Manager (optionally load keys from file or dict)
+# keys_path="keys.json" or api_keys={"client_id": "...", ...}
+feed = FeedManager(keys_path="config/keys.json")
 
-# Option 2: Inject credentials directly (Secure)
-my_keys = {"client_id": "...", "client_secret": "..."}
-feed = FeedManager(config_path="market_config.json", api_keys=my_keys)
+# 2. Define and Add Feeds
+# You can load this from a JSON file or define it in code
+btc_config = {
+    "register_name": "BTC",
+    "base_symbol": "BTC",
+    "settlement": "coin",
+    "source": "deribit"
+}
 
-# Start the feed
+feed.register_market(btc_config)
+
+# 3. Start the feed
 feed.start_stream()
 
-# Get Data
+# 4. Get Data
 snapshot = feed.get_snapshot()
 print(f"BTC Price: {snapshot.index_prices.get('BTC_USDC')}")
 ```
@@ -51,7 +59,7 @@ print(f"BTC Price: {snapshot.index_prices.get('BTC_USDC')}")
 ```
 [
     {
-        "tab_name": "BTC",
+        "register_name": "BTC",
         "base_symbol": "BTC",
         "settlement": "coin",
         "source": "deribit"
