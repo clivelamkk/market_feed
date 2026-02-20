@@ -42,7 +42,14 @@ def find_and_subscribe_options(manager, undl_name, min_days=3):
     if not cfg: return []
     
     source = cfg.get('source', 'deribit').lower()
-    adapter = manager.adapters.get(source)
+    account = cfg.get('account', 'default').lower()
+    adapter_key = f"{source}:{account}"
+    adapter = manager.adapters.get(adapter_key)
+
+    if not adapter:
+        print(f"   ⚠️ Could not find adapter for {adapter_key}. Skipping options.")
+        return []
+
     ref_tickers = adapter.get_reference_tickers(cfg)
     
     # 1. Get Spot Price (from cache or REST)
@@ -140,8 +147,15 @@ def activate_feed_stage(config, stage_name):
     feed.register_market(config)
     
     # 2. Get Ref Tickers & Subscribe IMMEDIATELY
-    source = config['source']
-    adapter = feed.adapters.get(source)
+    source = config.get('source', 'deribit').lower()
+    account = config.get('account', 'default').lower()
+    adapter_key = f"{source}:{account}"
+    adapter = feed.adapters.get(adapter_key)
+
+    if not adapter:
+        print(f"   ⚠️ Could not find adapter for {adapter_key}. Skipping subscription.")
+        return
+        
     refs = adapter.get_reference_tickers(config)
     
     if refs:

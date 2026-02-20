@@ -1,0 +1,18 @@
+{
+  "deribit": {
+    "default": {
+      "client_id": "YOUR_DEFAULT_DERIBIT_ID",
+      "client_secret": "YOUR_DEFAULT_DERIBIT_SECRET"
+    },
+    "account_2": {
+      "client_id": "YOUR_SECOND_DERIBIT_ID",
+      "client_secret": "YOUR_SECOND_DERIBIT_SECRET"
+    }
+  },
+  "binance": {
+    "default": {
+        "client_id": "YOUR_BINANCE_API_KEY",
+        "client_secret": "YOUR_BINANCE_API_SECRET"
+    }
+  }
+}

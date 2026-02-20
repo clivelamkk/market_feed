@@ -15,7 +15,8 @@ authors = [
 dependencies = [
   "websocket-client",
   "requests",
-  "numpy"
+  "numpy",
+  "pandas"
 ]
 
 [tool.setuptools.packages.find]

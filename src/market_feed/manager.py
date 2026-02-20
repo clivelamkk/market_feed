@@ -11,9 +11,25 @@ from .adapters.deribit import DeribitAdapter
 class FeedManager:
     def __init__(self, keys_path="keys.json", api_keys=None, log_level=0):
         """
+        Initializes the FeedManager. It can manage multiple adapters for the same
+        data source, each with its own API key.
+
+        The `keys.json` file should be structured to support multiple accounts per vendor:
+        {
+            "deribit": {
+                "default": { "client_id": "...", "client_secret": "..." },
+                "account_2": { "client_id": "...", "client_secret": "..." }
+            },
+            "binance": {
+                "default": { "client_id": "...", "client_secret": "..." }
+            }
+        }
+        When registering a market, you can specify an 'account' in the feed_config.
+        If no account is specified, it will use the 'default' key.
+
         Args:
-            keys_path (str): Path to keys.json
-            api_keys (dict): Direct keys dict
+            keys_path (str): Path to keys.json file.
+            api_keys (dict): Optional. A dictionary of API keys. If provided, it overrides `keys_path`.
             log_level (int): 0=None, 1=Spot/Perps Only, 2=All (Options included)
         """
         self.keys_path = keys_path
@@ -25,107 +41,125 @@ class FeedManager:
         self._instruments_by_undl: Dict[str, List[dict]] = {}
         self._instrument_sets: Dict[str, set] = {}
         
-        # self._keys = api_keys if api_keys else self._load_keys_from_file()
         self._keys = api_keys if api_keys is not None else self._load_keys_from_file()
         self._market_config = []
         self.running = False
         
+        # Adapters are keyed by "source:account" (e.g., "deribit:default")
         self.adapters: Dict[str, ExchangeAdapter] = {}
-        self._init_adapters()
         
         print(f"[FeedManager] Bootstrapping... (Log Level: {self.log_level})")
-        # self._bootstrap_instruments() # No config initially
-        # self._bootstrap_prices()
 
-    def _init_adapters(self):
-        # 1. Identify which sources are actually requested in the config
-        #    e.g. {'deribit', 'binance'}
-        active_sources = {cfg.get('source', 'deribit').lower() for cfg in self._market_config}
-        
-        # 2. Initialize only the required adapters
-        if 'deribit' in active_sources and 'deribit' not in self.adapters:
-            # We assume keys are flat for now: "client_id", "client_secret"
-            # Future improvement: "deribit_id", "binance_key", etc.
-            d_id = self._keys.get("client_id")
-            d_secret = self._keys.get("client_secret")
-            self.adapters['deribit'] = DeribitAdapter(self, d_id, d_secret)
-            
-        if 'binance' in active_sources and 'binance' not in self.adapters:
-            # Assuming you created a BinanceAdapter class
-            # from .adapters.binance import BinanceAdapter
-            # self.adapters['binance'] = BinanceAdapter(self)
-            print("[FeedManager] Warning: Binance requested but adapter not imported yet.")
-            
-        if 'bloomberg' in active_sources and 'bloomberg' not in self.adapters:
-            try:
-                from .adapters.bloomberg import BloombergAdapter
-                self.adapters['bloomberg'] = BloombergAdapter(self)
-                print("[FeedManager] Bloomberg Adapter Initialized.")
-            except ImportError as e:
-                # This catches the error raised by bloomberg.py if blpapi is missing
-                print(f"[FeedManager] Skipping Bloomberg: {e}")
-            except Exception as e:
-                print(f"[FeedManager] Error initializing Bloomberg: {e}")
+
 
     def register_market(self, feed_config: dict):
         """
-        Registers a new market/feed configuration and initializes its data.
-        Call this to express interest in specific underlyings/sources.
-        
+        Registers a new market/feed configuration. This is the primary method
+        for defining what data you want to receive. It will create and manage
+        the necessary adapter based on the config.
+
         Args:
-            feed_config (dict): A dictionary containing feed settings. 
-                                Example: {'register_name': 'BTC Options', 'source': 'deribit', ...}
+            feed_config (dict): A dictionary containing feed settings.
+                Example: {
+                    'register_name': 'BTC_Options_Account1',
+                    'source': 'deribit',
+                    'account': 'account_1',  // <-- Optional, 'default' is used if omitted
+                    'base_symbol': 'BTC',
+                    'settlement': 'coin'
+                }
         """
-        register = feed_config.get('register_name')
-        if not register:
+        register_name = feed_config.get('register_name')
+        if not register_name:
             print("[FeedManager] Error: 'register_name' is required in feed_config.")
             return
 
+        # 1. Get or Create Adapter
+        adapter = self._get_or_create_adapter(feed_config)
+        if not adapter:
+            source = feed_config.get('source', 'deribit')
+            print(f"[FeedManager] Error: Adapter for source '{source}' could not be initialized.")
+            return
+
+        # 2. Update Internal State
         with self._lock:
-            # 1. Update Config & Structures
             self._market_config.append(feed_config)
-            if register not in self._instruments_by_undl:
-                self._instruments_by_undl[register] = []
-                self._instrument_sets[register] = set()
-        
-        # 2. Ensure Adapter exists
-        self._init_adapters()
-        
+            if register_name not in self._instruments_by_undl:
+                self._instruments_by_undl[register_name] = []
+                self._instrument_sets[register_name] = set()
+
         # 3. Bootstrap Data for this specific feed
+        print(f"[FeedManager] Bootstrapping feed for {register_name} ({adapter.name})...")
+        instruments = adapter.get_option_chain(feed_config)
+        with self._lock:
+            for inst in instruments:
+                nm = inst['instrument_name']
+                if nm not in self._instrument_sets[register_name]:
+                    self._instrument_sets[register_name].add(nm)
+                    self._instruments_by_undl[register_name].append(inst)
+
+        # Bootstrap Prices (Reference Tickers)
+        tickers = adapter.get_reference_tickers(feed_config)
+        for t in tickers:
+            px = adapter.get_latest_price(t)
+            if px > 0:
+                with self._lock: self._index_prices[t] = px
+                print(f"[FeedManager] Bootstrapped {t}: {px}")
+
+        # 4. If manager is already running, start the new adapter immediately
+        if self.running and not adapter.is_alive():
+            adapter.start()
+
+    def _get_or_create_adapter(self, feed_config: dict) -> Optional[ExchangeAdapter]:
         source = feed_config.get('source', 'deribit').lower()
-        adapter = self.adapters.get(source)
+        account = feed_config.get('account', 'default').lower()
+        adapter_key = f"{source}:{account}"
+
+        if adapter_key in self.adapters:
+            return self.adapters[adapter_key]
+
+        print(f"[FeedManager] Creating new adapter for {adapter_key}")
+        
+        adapter = None
+        if source == 'deribit':
+            # Get the specific account's keys, or the vendor's top-level keys, or empty dict
+            vendor_keys = self._keys.get(source, {})
+            account_keys = vendor_keys.get(account, {})
+            client_id = account_keys.get("client_id")
+            client_secret = account_keys.get("client_secret")
+            adapter = DeribitAdapter(self, client_id, client_secret)
+            
+        elif source == 'binance':
+            vendor_keys = self._keys.get(source, {})
+            account_keys = vendor_keys.get(account, {})
+            client_id = account_keys.get("client_id")
+            client_secret = account_keys.get("client_secret")
+            # from .adapters.binance import BinanceAdapter
+            # adapter = BinanceAdapter(self, client_id, client_secret)
+            print("[FeedManager] Warning: Binance adapter not fully implemented yet.")
+
+        elif source == 'bloomberg':
+            try:
+                from .adapters.bloomberg import BloombergAdapter
+                adapter = BloombergAdapter(self)
+                print("[FeedManager] Bloomberg Adapter Initialized.")
+            except ImportError as e:
+                print(f"[FeedManager] Skipping Bloomberg: {e}")
+            except Exception as e:
+                print(f"[FeedManager] Error initializing Bloomberg: {e}")
         
         if adapter:
-            print(f"[FeedManager] Bootstrapping feed for {register} ({source})...")
-            # Bootstrap Instruments
-            instruments = adapter.get_option_chain(feed_config)
-            with self._lock:
-                for inst in instruments:
-                    nm = inst['instrument_name']
-                    if nm not in self._instrument_sets[register]:
-                        self._instrument_sets[register].add(nm)
-                        self._instruments_by_undl[register].append(inst)
-            
-            # Bootstrap Prices (Reference Tickers)
-            tickers = adapter.get_reference_tickers(feed_config)
-            for t in tickers:
-                px = adapter.get_latest_price(t)
-                if px > 0:
-                    with self._lock: self._index_prices[t] = px
-                    print(f"[FeedManager] Bootstrapped {t}: {px}")
-            
-            # 4. If manager is already running, start the new adapter immediately
-            if self.running:
-                adapter.start()
-        else:
-            print(f"[FeedManager] Error: Adapter for source '{source}' could not be initialized.")
+            self.adapters[adapter_key] = adapter
+        
+        return adapter
 
     def get_subscription_map(self, register_name, target_dates, min_pct, max_pct):
         cfg = next((c for c in self._market_config if c['register_name'] == register_name), None)
         if not cfg: return {}
         
         source = cfg.get('source', 'deribit').lower()
-        adapter = self.adapters.get(source)
+        account = cfg.get('account', 'default').lower()
+        adapter_key = f"{source}:{account}"
+        adapter = self.adapters.get(adapter_key)
         if not adapter: return {}
 
         # --- GENERIC LOGIC START ---
@@ -179,37 +213,24 @@ class FeedManager:
 
     def subscribe_custom(self, source: str, tickers: List[str]):
         """
-        Manually subscribe to a list of arbitrary tickers on a specific source.
-        Useful for adding spot/index tickers that aren't part of the option chain.
-        
+        Manually subscribe to a list of arbitrary tickers on a specific source,
+        using the 'default' account for that source.
+
         Args:
             source (str): 'deribit', 'bloomberg', etc.
             tickers (list): List of ticker strings (e.g. ['AAPL', 'MSFT', 'BTC-PERPETUAL'])
         """
-        adapter = self.adapters.get(source.lower())
+        source_lower = source.lower()
+        adapter_key = f"{source_lower}:default"
+        adapter = self.adapters.get(adapter_key)
+
         if adapter:
-            print(f"[FeedManager] Custom subscription to {len(tickers)} tickers on {source}")
+            print(f"[FeedManager] Custom subscription to {len(tickers)} tickers on {adapter_key}")
             adapter.subscribe(tickers)
         else:
-            print(f"[FeedManager] Error: Source '{source}' not initialized.")
+            print(f"[FeedManager] Error: Default adapter for source '{source}' not initialized. "
+                  "Ensure a market from that source has been registered first.")
 
-    def _bootstrap_prices(self):
-        """Generic price bootstrapping using Adapter logic."""
-        for cfg in self._market_config:
-            source = cfg.get('source', 'deribit').lower()
-            adapter = self.adapters.get(source)
-            if not adapter: continue
-            
-            # Ask adapter for tickers
-            tickers = adapter.get_reference_tickers(cfg)
-            
-            for t in tickers:
-                px = adapter.get_latest_price(t)
-                if px > 0:
-                    with self._lock: self._index_prices[t] = px
-                    print(f"[FeedManager] Bootstrapped {t}: {px}")
-
-    # ... (Rest of the methods: get_snapshot, ingest_ticker, etc. remain the same) ...
     def start_stream(self):
         self.running = True
         for a in self.adapters.values(): a.start()
@@ -285,20 +306,6 @@ class FeedManager:
                         pass # Skip malformed names
         return results
             
-    def _bootstrap_instruments(self):
-        for cfg in self._market_config:
-            source = cfg.get('source', 'deribit').lower()
-            adapter = self.adapters.get(source)
-            if not adapter: continue
-            instruments = adapter.get_option_chain(cfg)
-            register = cfg['register_name']
-            with self._lock:
-                for inst in instruments:
-                    nm = inst['instrument_name']
-                    if nm not in self._instrument_sets[register]:
-                        self._instrument_sets[register].add(nm)
-                        self._instruments_by_undl[register].append(inst)
-
     def ingest_ticker(self, raw_data):
         nm = raw_data['instrument_name']
         
@@ -357,9 +364,11 @@ class FeedManager:
     def on_adapter_reconnect(self, source_name): pass
 
     def _load_keys_from_file(self):
-        if self.keys_path and os.path.exists(self.keys_path):
-        # if os.path.exists(self.keys_path):
-            try:
-                with open(self.keys_path, 'r') as f: return json.load(f)
-            except: pass
-        return {}
+        if not (self.keys_path and os.path.exists(self.keys_path)):
+            return {}
+        try:
+            with open(self.keys_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[FeedManager] Error loading keys from {self.keys_path}: {e}")
+            return {}

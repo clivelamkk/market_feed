@@ -1,1 +1,0 @@
-[{"register_name": "BTC_DERIBIT", "base_symbol": "BTC", "settlement": "coin", "source": "deribit"}, {"register_name": "ESH1_BBG", "base_symbol": "SPY US Equity", "settlement": "usd", "source": "bloomberg"}]

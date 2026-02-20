@@ -19,6 +19,10 @@ class ExchangeAdapter(ABC):
         self.manager = manager
         self.connected = False
 
+    def is_alive(self):
+        """Check if the underlying thread is running."""
+        return hasattr(self, 'thread') and self.thread and self.thread.is_alive()
+
     @abstractmethod
     def start(self):
         """Start the WebSocket thread."""
