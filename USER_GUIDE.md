@@ -98,7 +98,8 @@ The `feed_config` dictionary is critical for `register_market`.
     *   `'usd'`: Linear contracts (e.g., USDC-margined).
 
 #### Bloomberg
-*   **`base_symbol`:** The root ticker (e.g., `'SPY'`, `'SPX'`, `'ES1'`). The adapter will try to find `"SPY US Equity"` or `"SPX Index"`.
+*   **`base_symbol`:** The root ticker (e.g., `'SPY'`, `'SPX'`). The adapter will try to find `"SPY US Equity"` or `"SPX Index"`.
+*   *Note:* Futures options are not yet fully supported as they often have unique underlying codes per expiry.
 
 ---
 

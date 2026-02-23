@@ -6,25 +6,25 @@ This guide is written for software engineers and contributors. It explains the i
 
 ## 1. High-Level Architecture
 
-The `market_feed` library is a **multi-threaded, event-driven market data aggregator**. It connects to multiple crypto/finance exchanges (via WebSockets), normalizes their disparate data formats into a single standard, and provides a thread-safe snapshot to the main application.
+The `market_feed` library is a **multi-threaded market data aggregator**. It connects to multiple crypto/finance exchanges (via WebSockets), normalizes their data formats into a single standard, and provides a thread-safe snapshot to the main application.
 
 ### Architectural Diagram
 
 ```mermaid
 graph TD
-    UserApp[User Application] -->|1. calls| FeedManager.get_snapshot()
-    UserApp -->|2. calls| FeedManager.register_market(...)
+    UserApp[User Application] -->|1. calls get_snapshot| FeedManager
+    UserApp -->|2. calls register_market| FeedManager
     
     subgraph "Market Feed Library"
-        FeedManager[FeedManager (The Brain)]
+        FeedManager[FeedManager]
         State[(Shared State / Cache)]
         
         FeedManager -- owns --> State
         FeedManager -- manages --> AdapterA[Deribit Adapter]
         FeedManager -- manages --> AdapterB[Bloomberg Adapter]
         
-        AdapterA -- 3. pushes raw data --> FeedManager.ingest_ticker()
-        AdapterB -- 3. pushes raw data --> FeedManager.ingest_ticker()
+        AdapterA -- 3. pushes raw data --> FeedManager
+        AdapterB -- 3. pushes raw data --> FeedManager
     end
     
     AdapterA <-->|WebSocket| ExchangeA[Deribit API]

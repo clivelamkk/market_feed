@@ -3,17 +3,18 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A high-performance, thread-safe market data aggregator for financial applications. It seamlessly unifies data from cryptocurrency exchanges (Deribit) and traditional finance terminals (Bloomberg) into a single, normalized stream.
+A multi-threaded, thread-safe market data aggregator for financial applications. It unifies data from cryptocurrency exchanges (Deribit) and traditional finance terminals (Bloomberg) into a normalized stream.
 
-This library is designed for algorithmic trading systems, quantitative research tools, and real-time dashboards that require a reliable "source of truth" for market prices.
+This library is intended for algorithmic trading systems and research tools that require centralized market prices.
 
 ## Key Features
 
-*   **Unified API:** Treat Deribit Bitcoin options and SPY equity options exactly the same.
-*   **Thread-Safe:** Safe to use in multi-threaded GUI or calculation engines. Returns immutable snapshots.
-*   **Hybrid Architecture:** Combines REST (for bootstrapping full option chains) and WebSockets (for low-latency updates).
-*   **Resilient:** Automatic reconnection handling for WebSocket feeds.
-*   **Bloomberg Integration:** Native support for `blpapi` with intelligent symbol mapping (e.g., `SPY-20FEB26-500-C` -> `SPY US 02/20/26 C500 Equity`).
+*   **Unified API:** Treat Deribit Bitcoin options and SPY equity options consistently.
+*   **Thread-Safe:** Safe to use in multi-threaded environments. Returns immutable snapshots.
+*   **Hybrid Architecture:** Combines REST (for bootstrapping full option chains) and WebSockets (for updates).
+*   **Resilient:** Handles reconnection for WebSocket feeds.
+*   **Bloomberg Integration:** Support for `blpapi` with symbol mapping (e.g., `SPY-20FEB26-500-C` -> `SPY US 02/20/26 C500 Equity`).
+*   **Note:** Bloomberg futures options support is currently experimental as underlying feed codes vary by expiry.
 
 ## Installation
 
