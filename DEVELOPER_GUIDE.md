@@ -1,88 +1,180 @@
-# Market Feed - Developer Guide
+# Market Feed - Developer & Architecture Guide
 
-This document provides a technical deep-dive into the architecture, code structure, and data flow of the `market-feed` library. It is intended for developers who want to contribute to the project, modify its behavior, or create new exchange adapters.
+This guide is written for software engineers and contributors. It explains the internal architecture, the rationale behind design choices, and provides a detailed breakdown of the codebase.
 
-## Core Architectural Principles
+---
 
-The system is designed around a few key principles:
-- **Separation of Concerns:** The `FeedManager` acts as the central coordinator, while `ExchangeAdapter` implementations handle the specifics of each data source. This makes the system modular and easy to extend.
-- **Data Normalization:** Raw data from different sources is always converted into a standardized `MarketSnapshot` and common ticker structure. The `FeedManager` is responsible for this normalization (`ingest_ticker` method), not the adapters.
-- **Thread Safety:** All shared data within the `FeedManager` (e.g., `_tickers`, `_index_prices`) is protected by a single `threading.Lock` to prevent race conditions. Adapters run in their own background threads.
-- **Hybrid Data Model:** The system uses a two-pronged approach for data acquisition:
-    1.  **HTTP for Bootstrapping:** On registration, the manager makes synchronous HTTP calls via the adapter (`get_option_chain`, `get_latest_price`) to fetch the initial state (e.g., the full option chain) and reference prices. This ensures the application has a complete dataset from the start.
-    2.  **WebSocket for Real-Time:** After bootstrapping, the manager uses WebSockets for low-latency, real-time updates for the subscribed instruments.
+## 1. High-Level Architecture
 
-## Code Architecture and Components
+The `market_feed` library is a **multi-threaded, event-driven market data aggregator**. It connects to multiple crypto/finance exchanges (via WebSockets), normalizes their disparate data formats into a single standard, and provides a thread-safe snapshot to the main application.
 
-### 1. `FeedManager` (`manager.py`)
+### Architectural Diagram
 
-The `FeedManager` is the public-facing entry point and the brain of the system.
+```mermaid
+graph TD
+    UserApp[User Application] -->|1. calls| FeedManager.get_snapshot()
+    UserApp -->|2. calls| FeedManager.register_market(...)
+    
+    subgraph "Market Feed Library"
+        FeedManager[FeedManager (The Brain)]
+        State[(Shared State / Cache)]
+        
+        FeedManager -- owns --> State
+        FeedManager -- manages --> AdapterA[Deribit Adapter]
+        FeedManager -- manages --> AdapterB[Bloomberg Adapter]
+        
+        AdapterA -- 3. pushes raw data --> FeedManager.ingest_ticker()
+        AdapterB -- 3. pushes raw data --> FeedManager.ingest_ticker()
+    end
+    
+    AdapterA <-->|WebSocket| ExchangeA[Deribit API]
+    AdapterB <-->|Desktop API| ExchangeB[Bloomberg Terminal]
+```
 
-**Responsibilities:**
--   **State Management:** It holds the central, normalized state of all market data, including `_tickers`, `_index_prices`, and `_instruments_by_undl`.
--   **Adapter Lifecycle:** It creates, starts, stops, and manages all `ExchangeAdapter` instances. Each adapter is keyed by a unique identifier: `f"{source}:{account}"`.
--   **Configuration:** It processes user-provided `feed_config` dictionaries to determine which adapters to launch and what data to fetch.
--   **Data Ingestion and Normalization:** The `ingest_ticker` method is the single entry point for all data coming from all adapters. It receives raw data, normalizes it into the standard ticker format, and merges it into the main `_tickers` state dictionary.
--   **Public API:** It exposes a clean API to the user for starting/stopping the feed, registering markets, and retrieving data (`get_snapshot`).
+### Core Design Principles
 
-**Internal Data Flow for `register_market`:**
-1.  A `feed_config` is received.
-2.  `_get_or_create_adapter` is called, which initializes a new adapter if one for the specified `source:account` doesn't already exist.
-3.  The adapter's synchronous methods are called to bootstrap data:
-    -   `get_option_chain` fetches the full list of tradable instruments (e.g., all options for an underlying). This data is stored in `_instruments_by_undl`.
-    -   `get_reference_tickers` gets the list of primary price references (e.g., `BTC-PERPETUAL`).
-    -   `get_latest_price` is called for each reference ticker to bootstrap the `_index_prices` cache.
-4.  If the manager is already running, the new adapter's `start()` method is called immediately.
+1.  **Centralized State, Decentralized I/O**:
+    *   **Why:** Network I/O is slow and prone to blocking. Market data processing needs to be fast.
+    *   **How:** Each `ExchangeAdapter` runs in its own thread to handle I/O. They dump data into the `FeedManager`. The `FeedManager` protects the shared state with a lock.
 
-### 2. `ExchangeAdapter` (`base.py`)
+2.  **Normalize Early**:
+    *   **Why:** Downstream logic (trading algos, UIs) shouldn't care if data came from Deribit or Bloomberg.
+    *   **How:** Adapters act as translators. They convert exchange-specific subscription commands into generic ones, and the `FeedManager` converts incoming raw data into a standardized `ticker` dictionary.
 
-This is an abstract base class (`ABC`) that defines the contract every exchange-specific adapter must implement.
+3.  **Bootstrapping vs. Streaming**:
+    *   **Why:** WebSockets give updates, but often you need the *initial state* (e.g., list of all option strikes) before you can subscribe.
+    *   **How:** The system performs a synchronous HTTP/Reference Data fetch at startup (`get_option_chain`) to build the universe, then switches to async WebSockets for price updates.
 
-**Responsibilities:**
--   **Implement the Interface:** Provide concrete implementations for all `@abstractmethod`s.
--   **Exchange-Specific Logic:** Handle the unique details of connecting to an exchange's WebSocket and REST APIs.
--   **Data Translation (Outbound):** Translate generic subscription requests from the `FeedManager` into the specific format required by the exchange's API. For example, the `subscribe` method in the Deribit adapter formats channel names as `"ticker.{instrument_name}.100ms"`.
--   **Data Forwarding (Inbound):** Receive raw messages from the exchange's WebSocket, perform minimal parsing (e.g., `json.loads`), and immediately forward the raw data object to the `manager.ingest_ticker()` method. **Adapters should not normalize data.**
+---
 
-**Abstract Methods to Implement:**
--   `start()`: Start the main WebSocket connection and processing loop in a new thread.
--   `stop()`: Cleanly shut down the WebSocket connection and thread.
--   `get_option_chain(...)`: Implement the HTTP logic to fetch all instruments for a given underlying.
--   `get_latest_price(...)`: Implement the HTTP logic to fetch a single price for a single instrument.
--   `subscribe(...)`: Implement the logic to send a subscription message over the WebSocket.
--   `get_reference_tickers(...)`: Return a list of the key underlying/index instrument names for a given asset.
+## 2. Codebase Walkthrough
 
-### 3. Concrete Adapters (`adapters/deribit.py`, `adapters/bloomberg.py`)
+### A. `src/market_feed/base.py` (The Contract)
 
-These classes provide the concrete implementation of the `ExchangeAdapter` interface for a specific data source.
+This file defines the **Interface** that all parts of the system must agree on.
 
-**Example: `DeribitAdapter`**
--   **Connection:** Uses the `websocket-client` library to connect to Deribit's WebSocket API.
--   **Authentication:** Sends an auth request on connection if API keys are provided.
--   **Subscriptions:** The `subscribe` method takes a list of instrument names, maps them to Deribit's format (e.g., `ticker.BTC-PERPETUAL.100ms`), and sends the JSON-RPC subscription request.
--   **Data Handling:** The `_on_message` callback receives WebSocket data, loads it from JSON, and passes the `data` payload directly to `self.manager.ingest_ticker(data)`.
+| Component | Description | Why it's Important |
+| :--- | :--- | :--- |
+| `MarketSnapshot` | A `dataclass` holding a frozen copy of the market state (`tickers`, `index_prices`). | **Thread Safety.** When the user asks for data, we give them a *copy*, not a reference to the live object. This prevents "ConcurrentModificationException" style errors in the user's code. |
+| `ExchangeAdapter` | An Abstract Base Class (`ABC`). | **Polymorphism.** The `FeedManager` treats all exchanges exactly the same. It calls `.start()`, `.subscribe()`, etc., without knowing if it's talking to Deribit or Binance. |
 
-**Example: `BloombergAdapter`**
--   **Safe Import:** The adapter is designed to work even if the `blpapi` library is not installed (`HAS_BLPAPI` flag). All methods will gracefully do nothing in this case.
--   **Ticker Translation:** A significant portion of this adapter's logic is dedicated to translating between the app's internal ticker format (e.g., `SPY-20FEB26-688-C`) and the Bloomberg format (e.g., `SPY US 02/20/26 C688 Equity`).
--   **Correlation IDs:** It uses `blpapi.CorrelationId` to reliably map asynchronous responses from the Bloomberg API back to the application's internal instrument name. This is a critical pattern for working with `blpapi`.
--   **Reference Data vs. Market Data:** It uses the correct Bloomberg service for the job: `//blp/refdata` for bootstrapping the option chain and `//blp/mktdata` for real-time subscriptions.
+**Key Abstract Methods:**
+*   `start()` / `stop()`: Lifecycle management.
+*   `get_option_chain()`: **Bootstrap step.** Asks "What instruments exist?"
+*   `subscribe()`: **Runtime step.** Asks "Send me updates for these."
 
-## High-Level Data Flow (Real-Time Update)
+### B. `src/market_feed/manager.py` (The Brain)
 
-1.  **Exchange:** A trade occurs on the exchange for a subscribed instrument (e.g., BTC-PERPETUAL).
-2.  **WebSocket Message:** The exchange sends a WebSocket message containing the updated ticker data to the client.
-3.  **Adapter Thread:** The corresponding adapter's `_on_message` method (running in a background thread) receives the raw message.
-4.  **Forward to Manager:** The adapter performs minimal parsing (e.g., `json.loads`) and immediately calls `self.manager.ingest_ticker(raw_data_object)`.
-5.  **Manager Locks and Ingests:** The `FeedManager` acquires its `_lock`.
-    -   It finds the instrument name in the `raw_data_object`.
-    -   It retrieves the existing ticker data for that instrument from its `_tickers` dictionary.
-    -   It merges the new fields from the update into the existing data, ensuring no data is lost from partial updates.
-    -   It updates the `timestamp`.
-    -   If the update is for a reference ticker, it may also update the `_index_prices` cache.
-6.  **Manager Unlocks:** The lock is released.
-7.  **User `get_snapshot()`:** The user's application thread calls `feed.get_snapshot()`.
-8.  **Snapshot Creation:** The `FeedManager` acquires the lock again, makes a deep copy of the `_tickers` and `_index_prices` dictionaries, creates a `MarketSnapshot` object, and releases the lock.
-9.  **Return to User:** The thread-safe `MarketSnapshot` is returned to the user, who can now use the fresh data without worrying about race conditions.
+This is the most complex file. It orchestrates the entire system.
 
-This architecture ensures that the I/O-bound work of the adapters is isolated from the main application, and the `FeedManager` provides a simple, robust, and thread-safe interface for consuming complex market data.
+#### Key Functions & Logic
+
+1.  **`__init__`**:
+    *   **Action:** Initializes the `threading.Lock()` and the empty state dictionaries (`_tickers`, `_index_prices`).
+    *   **Why:** The lock is critical. Without it, an adapter might write to `_tickers` while the user is reading it, causing a crash.
+
+2.  **`register_market(feed_config)`**:
+    *   **Action:**
+        1.  Checks if an adapter for the requested source (e.g., "deribit:account1") exists. If not, creates it.
+        2.  **Bootstraps:** Calls `adapter.get_option_chain()` to populate the list of tradable instruments.
+        3.  **Bootstraps:** Calls `adapter.get_latest_price()` for reference tickers (like BTC-PERPETUAL) to set initial index prices.
+    *   **Expected Outcome:** After this runs, the `FeedManager` knows *what* instruments exist, but isn't receiving live updates for them yet.
+
+3.  **`ingest_ticker(raw_data)`**:
+    *   **Action:** The *single point of entry* for data.
+        1.  Acquires `self._lock`.
+        2.  Finds the existing ticker record (or creates one).
+        3.  **Merges** the new data. (e.g., if the update only contains a new `last_price` but no `bid/ask`, we keep the old `bid/ask`).
+        4.  Releases `self._lock`.
+    *   **Why:** Merging is crucial because many WebSocket feeds send "diffs" (only changed fields) to save bandwidth.
+
+4.  **`get_subscription_map(...)`**:
+    *   **Action:** Calculates which instruments *should* be subscribed to based on filters (e.g., "Only strikes between $50k and $60k").
+    *   **Why:** Subscribing to *everything* is too expensive (bandwidth/CPU). This allows smart filtering.
+
+### C. `src/market_feed/adapters/deribit.py` (The Implementation)
+
+A concrete example of how to talk to a crypto exchange.
+
+*   **`_ws_loop`**: The main thread loop. It connects to the WebSocket and waits for messages.
+*   **`_on_message`**:
+    *   **Input:** A JSON string from Deribit.
+    *   **Process:** Parses JSON -> Extracts `result` or `params` -> Calls `manager.ingest_ticker()`.
+    *   **Output:** None (Side effect: Manager state is updated).
+*   **`get_option_chain`**:
+    *   **Input:** `base_symbol` (e.g., "BTC").
+    *   **Process:** Calls Deribit REST API `public/get_instruments`.
+    *   **Output:** A list of raw instrument dictionaries.
+
+### D. `src/market_feed/adapters/bloomberg.py` (The Enterprise Implementation)
+
+Handles the complexity of the Bloomberg Desktop API (`blpapi`).
+
+*   **Correlation IDs**:
+    *   **Problem:** Bloomberg is asynchronous. You send a request for "SPY", and later get a message. How do you know it's for "SPY"?
+    *   **Solution:** We attach a unique integer ID (`CorrelationId`) to every request. We maintain a map `ID -> TickerName`. When a message comes back, we look up the ID to find the name.
+*   **Name Translation**:
+    *   **Problem:** Internal app uses `SPY-20FEB26-688-C`. Bloomberg uses `SPY US 02/20/26 C688 Equity`.
+    *   **Solution:** Regex-based translation methods (`_convert_to_bbg`, `_parse_bbg_to_app`) convert between the two formats seamlessly.
+
+---
+
+## 3. Data Flow Scenarios
+
+### Scenario 1: Startup & Registration
+1.  **User** calls `manager.register_market({'source': 'deribit', 'base_symbol': 'BTC'})`.
+2.  **Manager** checks for existing Deribit adapter. (Creates one if missing).
+3.  **Manager** calls `DeribitAdapter.get_option_chain()`.
+4.  **Adapter** performs HTTP GET to Deribit. Returns list of 1000+ options.
+5.  **Manager** stores these in `self._instruments_by_undl`.
+6.  **Manager** calls `adapter.start()`.
+7.  **Adapter** spawns a background thread and opens WebSocket connection.
+
+### Scenario 2: Real-Time Update
+1.  **Exchange** sends WebSocket frame: `{"instrument_name": "BTC-29DEC23-50000-C", "last_price": 0.05}`.
+2.  **Adapter** (`_on_message`) receives this.
+3.  **Adapter** calls `manager.ingest_ticker(data)`.
+4.  **Manager** locks. Updates `_tickers["BTC-29DEC23-50000-C"]["last_price"]` to `0.05`. Updates timestamp. Unlocks.
+
+### Scenario 3: User Reads Data
+1.  **User** calls `feed.get_snapshot()`.
+2.  **Manager** locks.
+3.  **Manager** performs `copy.deepcopy()` of `_tickers`.
+4.  **Manager** unlocks.
+5.  **Manager** returns the copy.
+6.  **User** iterates over the copy safely, even if updates are arriving in the background.
+
+---
+
+## 4. Extending the Library
+
+### Adding a New Exchange (e.g., Binance)
+
+1.  **Create File:** `src/market_feed/adapters/binance.py`.
+2.  **Inherit:** Create class `BinanceAdapter(ExchangeAdapter)`.
+3.  **Implement Abstract Methods:**
+    *   `get_option_chain`: Call Binance API to get list of symbols.
+    *   `subscribe`: Send `{ method: "SUBSCRIBE", params: [...] }`.
+    *   `start`: Setup WebSocket connection (use `websocket-client` or `aiohttp`).
+4.  **Register:** In `manager.py`, inside `_get_or_create_adapter`, add a generic `elif source == 'binance':` block to instantiate your new class.
+
+### Adding New Data Fields
+
+1.  **Update Ingestion:** In `manager.py`, `ingest_ticker` function.
+    *   Add the new field to the extraction list: `new_val = raw_data.get('my_new_field')`.
+    *   Ensure it is merged into `_tickers`.
+2.  **Update Snapshot:** If the field is complex (like a nested object), ensure `MarketSnapshot` handles it (deepcopy usually covers this).
+
+---
+
+## 5. Troubleshooting
+
+*   **Missing Data?**
+    *   Check `feed_debug.log`.
+    *   Ensure `log_level` is set to 2 in `FeedManager`.
+    *   Verify `feed_instruments.csv` mappings if using Bloomberg or unusual tickers.
+*   **Stale Data?**
+    *   Check timestamps in `get_snapshot().tickers[sym]['ts']`.
+    *   If timestamps aren't updating, the WebSocket thread might have died. The `is_ready` flag in the snapshot indicates if adapters are connected.
+*   **"Lock" Freezing?**
+    *   Never put network calls (HTTP/WS) *inside* a `with self._lock:` block in the Manager. That will freeze the entire application. Network calls belong in the Adapters.

@@ -1,23 +1,40 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "market_feed"
-version = "0.2.0"
-description = "A modular multi-exchange data feed manager"
+version = "0.2.1"
+description = "A modular, thread-safe market data aggregator for crypto (Deribit) and traditional finance (Bloomberg)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
   {name = "Clive Lam", email = "clivelamkk@gmail.com"}
 ]
-dependencies = [
-  "websocket-client",
-  "requests",
-  "numpy",
-  "pandas"
+keywords = ["market-data", "finance", "crypto", "deribit", "bloomberg", "trading"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Programming Language :: Python :: 3",
 ]
+dependencies = [
+    "requests>=2.31.0",
+    "websocket-client>=1.6.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0"
+]
+
+[project.optional-dependencies]
+bloomberg = ["blpapi"]
+dev = ["pytest", "black", "flake8", "ipykernel"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["market_feed*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

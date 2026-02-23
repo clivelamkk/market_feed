@@ -1,147 +1,175 @@
 # Market Feed - User Guide
 
-This guide provides a detailed overview of the `market-feed` library from a user's perspective. It covers the main components, methods, and data structures you will interact with.
+This guide provides a detailed reference for the public API of the `market_feed` library. It covers how to configure feeds, interpret data, and manage the feed lifecycle.
 
-## Core Component: `FeedManager`
+## Table of Contents
+1.  [The FeedManager Class](#1-the-feedmanager-class)
+2.  [Configuration Dictionaries](#2-configuration-dictionaries)
+3.  [Data Structures (The Snapshot)](#3-data-structures-the-snapshot)
+4.  [Advanced Usage](#4-advanced-usage)
 
-The `FeedManager` is the central class for managing all data feed operations. It handles adapter initialization, data fetching, normalization, and state management.
+---
+
+## 1. The FeedManager Class
+
+The `FeedManager` is your primary interface. You should typically instantiate one manager for your entire application.
 
 ### Initialization
 
 ```python
-from market_feed import FeedManager
-
 feed = FeedManager(keys_path="keys.json", api_keys=None, log_level=0)
 ```
 
-**`__init__(self, keys_path="keys.json", api_keys=None, log_level=0)`**
-
-- **Purpose:** Creates a new `FeedManager` instance.
-- **Parameters:**
-    - `keys_path` (str, optional): The file path to your `keys.json` file. This file should contain the API credentials for the exchanges you want to use. Defaults to `"keys.json"`.
-    - `api_keys` (dict, optional): A dictionary containing API keys. If provided, it will be used instead of loading keys from `keys_path`. This is useful for environments where loading from files is not ideal. Defaults to `None`.
-    - `log_level` (int, optional): Controls the verbosity of the feed's console output.
-        - `0` (Default): No real-time ticker logging.
-        - `1`: Log only primary tickers (e.g., spot, perpetuals).
-        - `2`: Log all incoming tickers, including options.
-- **`keys.json` Format:**
-    The `keys.json` file allows you to specify multiple accounts per exchange. If an `account` is not specified when registering a market, the `"default"` account is used.
-    ```json
-    {
-        "deribit": {
-            "default": { "client_id": "...", "client_secret": "..." },
-            "account_2": { "client_id": "...", "client_secret": "..." }
-        },
-        "bloomberg": {
-            "default": {}
-        }
-    }
-    ```
+*   **`keys_path` (str, optional):** Path to a JSON file containing API credentials. Default is `"keys.json"`.
+*   **`api_keys` (dict, optional):** A dictionary of API keys to override the file.
+    *   *Structure:* `{"deribit": {"account_name": {"client_id": "...", "client_secret": "..."}}}`
+*   **`log_level` (int):** Controls verbosity.
+    *   `0`: Silent (Errors only).
+    *   `1`: Info (Bootstrapping, Connection status).
+    *   `2`: Debug (Logs all incoming ticker updates to `feed_debug.log`).
 
 ### Core Methods
 
-**`register_market(self, feed_config: dict)`**
+#### `register_market(feed_config: dict)`
 
-- **Purpose:** Registers a new market to be tracked. This is the primary method for defining your data requirements. The manager will automatically select or create the appropriate adapter based on the `source` specified.
-- **Parameters:**
-    - `feed_config` (dict): A dictionary defining the market feed.
-- **`feed_config` Structure:**
-    ```python
-    {
-        "register_name": "BTC_Deribit", # A unique name for this feed configuration.
-        "base_symbol": "BTC",           # The base currency or asset (e.g., 'BTC', 'ETH', 'SPY').
-        "settlement": "coin",           # The settlement type ('coin' or 'usd').
-        "source": "deribit",            # The data source ('deribit', 'bloomberg', etc.).
-        "account": "default"            # (Optional) The account to use from your keys.json.
-    }
-    ```
+Tells the manager to prepare a connection for a specific market sector (e.g., "BTC Options on Deribit").
 
-**`start_stream(self)`**
+*   **Behavior:**
+    1.  Validates the configuration.
+    2.  Initializes the appropriate adapter (Deribit, Bloomberg, etc.) if not already active.
+    3.  **Bootstraps Data:** Synchronously fetches the full list of instruments (Option Chain) and initial reference prices via HTTP. This ensures you have a complete "map" of the market before the first tick arrives.
+    4.  If `start_stream()` was already called, the new adapter starts immediately.
+*   **Arguments:** `feed_config` (See [Section 2](#2-configuration-dictionaries)).
 
-- **Purpose:** Starts all underlying adapter connections (WebSockets) in background threads. You must call this method to begin receiving real-time data.
+#### `start_stream()`
 
-**`stop_stream(self)`**
+Starts all registered adapters in background threads. They will begin connecting to WebSockets and streaming data.
 
-- **Purpose:** Stops all active data streams and closes all connections gracefully.
+#### `stop_stream()`
 
-**`get_snapshot(self) -> MarketSnapshot`**
+Gracefully shuts down all adapter threads and closes network connections.
 
-- **Purpose:** Returns a `MarketSnapshot` object, which is a thread-safe, unified representation of the current state of all registered markets.
-- **Returns:** A `MarketSnapshot` data object.
+#### `get_snapshot() -> MarketSnapshot`
 
-**`subscribe_custom(self, source: str, tickers: List[str])`**
+Returns a **thread-safe, immutable copy** of the current market state.
 
-- **Purpose:** Manually subscribe to a list of specific tickers for a given data source. This is useful for dynamically adding subscriptions without registering a new market.
-- **Parameters:**
-    - `source` (str): The data source to use (e.g., `'deribit'`).
-    - `tickers` (list): A list of instrument names to subscribe to (e.g., `['BTC-PERPETUAL', 'ETH-27FEB26-2000-C']`).
+*   **Why use this?** In a multi-threaded environment (like a UI or a trading engine), reading a dictionary while another thread writes to it causes crashes. The snapshot guarantees consistency.
+*   **Performance:** This operation involves a memory copy. It is fast enough for 10-50Hz loops, but avoid calling it in a tight `while True` loop without a `time.sleep()`.
 
-### Data Retrieval Methods
+#### `subscribe_custom(source: str, tickers: List[str])`
 
-**`get_expiries_for(self, register_name: str) -> List[str]`**
+Manually subscribes to a specific list of instruments on a given source.
 
-- **Purpose:** Retrieves a sorted list of all unique option expiry dates available for a given registered market.
-- **Parameters:**
-    - `register_name` (str): The unique name of the market feed you registered.
-- **Returns:** A list of expiry date strings (e.g., `['27FEB26', '27MAR26']`).
+*   **Use Case:** You want to track "BTC-PERPETUAL" and "ETH-PERPETUAL" specifically, without registering a full option chain.
+*   **Arguments:**
+    *   `source`: 'deribit', 'bloomberg', etc.
+    *   `tickers`: List of symbol strings (e.g., `['BTC-PERPETUAL', 'SPY US Equity']`).
 
-**`get_option_chain_details(self, register_name: str) -> List[dict]`**
+#### `get_subscription_map(register_name, target_dates, min_pct, max_pct)`
 
-- **Purpose:** Fetches a detailed and structured list of all available options for a given registered market.
-- **Parameters:**
-    - `register_name` (str): The unique name of the market feed.
-- **Returns:** A list of dictionaries, where each dictionary represents a single option contract with the following structure:
-    ```python
-    {
-        'symbol': 'BTC-27FEB26-67000-P', # The full instrument name
-        'base_currency': 'BTC',
-        'expiry': '27FEB26',
-        'strike': 67000.0,
-        'type': 'P', # 'C' for Call, 'P' for Put
-        'raw': { ... } # The original, raw data from the exchange
-    }
-    ```
+Helper function to generate a filtered list of instruments to subscribe to.
 
-**`get_subscription_map(self, register_name, target_dates, min_pct, max_pct)`**
+*   **Arguments:**
+    *   `register_name`: The name used in `register_market`.
+    *   `target_dates`: List of expiry strings (e.g., `['29DEC23', '26JAN24']`).
+    *   `min_pct` / `max_pct`: Filter strikes based on moneyness (e.g., -10% to +10% from spot).
+*   **Returns:** A dictionary structure organizing the filtered instruments.
 
-- **Purpose:** A powerful method to dynamically determine a set of option subscriptions based on price proximity to the current spot price and target expiries. It returns a structured map of the selected options and automatically subscribes to them if the feed is live.
-- **Parameters:**
-    - `register_name` (str): The market to analyze.
-    - `target_dates` (List[str]): A list of expiry dates to include (e.g., `['27FEB26']`).
-    - `min_pct` (float): The minimum strike price deviation from the spot price (e.g., `-5.0` for 5% below spot).
-    - `max_pct` (float): The maximum strike price deviation from the spot price (e.g., `5.0` for 5% above spot).
-- **Returns:** A dictionary structuring the selected options by expiry and strike for easy consumption.
+---
 
-## Data Structure: `MarketSnapshot`
+## 2. Configuration Dictionaries
 
-The `MarketSnapshot` is a `dataclass` that provides a clean, normalized view of the market state.
+The `feed_config` dictionary is critical for `register_market`.
 
+### Common Fields
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `register_name` | str | **Yes** | A unique ID for this market (e.g., "Deribit_BTC", "BBG_SPY"). Used for lookups later. |
+| `source` | str | **Yes** | The adapter to use: `'deribit'`, `'bloomberg'`, `'binance'`. |
+| `base_symbol` | str | **Yes** | The underlying asset symbol (e.g., `'BTC'`, `'ETH'`, `'SPY'`). |
+
+### Source-Specific Fields
+
+#### Deribit
+*   **`account` (str, optional):** Key into your `keys.json` to select credentials. Default: `'default'`.
+*   **`settlement` (str):**
+    *   `'coin'`: Inverse contracts (e.g., BTC-margined).
+    *   `'usd'`: Linear contracts (e.g., USDC-margined).
+
+#### Bloomberg
+*   **`base_symbol`:** The root ticker (e.g., `'SPY'`, `'SPX'`, `'ES1'`). The adapter will try to find `"SPY US Equity"` or `"SPX Index"`.
+
+---
+
+## 3. Data Structures (The Snapshot)
+
+The `MarketSnapshot` object returned by `get_snapshot()` has the following attributes:
+
+### `tickers` (Dict[str, Dict])
+
+The core data store. Keys are **normalized instrument names**.
+
+**Format:**
 ```python
-@dataclass
-class MarketSnapshot:
-    is_ready: bool
-    index_prices: Dict[str, float]
-    tickers: Dict[str, Any]
-    config: List[Dict]
-    instruments_by_undl: Dict[str, List[dict]]
+{
+    "BTC-29DEC23-30000-C": {
+        "instrument_name": "BTC-29DEC23-30000-C",
+        "last_price": 0.05,
+        "best_bid_price": 0.045,
+        "best_bid_amount": 10.0,
+        "best_ask_price": 0.055,
+        "best_ask_amount": 5.0,
+        "ts": 1708765432100,  # Timestamp (ms)
+        "stats": { ... }      # Exchange-specific stats (vol, high/low)
+    },
+    ...
+}
 ```
 
-- **`is_ready` (bool):** `True` if at least one adapter is connected and receiving data.
-- **`index_prices` (Dict[str, float]):** A dictionary mapping primary reference tickers (e.g., spot, perpetuals) to their latest price.
-    - Example: `{'BTC-PERPETUAL': 67000.50, 'SPY': 530.25}`
-- **`tickers` (Dict[str, Any]):** The core data dictionary containing the latest information for every subscribed instrument. The key is the instrument name.
-    - **Ticker Data Structure:**
-        ```python
-        {
-            'instrument_name': 'BTC-27FEB26-67000-P',
-            'best_bid_price': 1200.5,
-            'best_bid_amount': 10.0,
-            'best_ask_price': 1205.0,
-            'best_ask_amount': 8.0,
-            'last_price': 1202.0,
-            'stats': { ... }, # Exchange-specific statistics (e.g., volume)
-            'ts': 1677502800000 # Timestamp of the update
-        }
-        ```
-- **`config` (List[Dict]):** A list of all the market configurations that have been registered.
-- **`instruments_by_undl` (Dict[str, List[dict]]):** A dictionary mapping each `register_name` to the raw list of all instruments fetched for that market during initialization.
+### `index_prices` (Dict[str, float])
+
+A fast lookup for the "Spot" or "Index" price of the underlyings.
+
+**Example:**
+```python
+{
+    "BTC-PERPETUAL": 65432.10,
+    "SPY": 505.20
+}
+```
+
+### `instruments_by_undl` (Dict[str, List[dict]])
+
+A static map of the "Universe". This is populated during the `register_market` bootstrap phase. It lists *all* available instruments, even if you haven't subscribed to their price updates yet.
+
+**Use Case:** Use this to populate a "Strike Selector" dropdown in your UI.
+
+### `is_ready` (bool)
+
+`True` if at least one adapter is successfully connected and streaming. `False` if offline or initializing.
+
+---
+
+## 4. Advanced Usage
+
+### Instrument Name Normalization
+
+The library strives to use a single format for all options, regardless of the source:
+
+`{SYMBOL}-{DATE}-{STRIKE}-{TYPE}`
+
+*   **Symbol:** BTC, ETH, SPY
+*   **Date:** DDMMMYY (e.g., 20FEB26). Always uppercase.
+*   **Strike:** Float or Int (e.g., 500, 65000).
+*   **Type:** C (Call) or P (Put).
+
+**Examples:**
+*   Deribit: `BTC-29DEC23-50000-C` (Natively supported)
+*   Bloomberg: `SPY US 02/20/26 C500 Equity` -> `SPY-20FEB26-500-C` (Converted automatically)
+
+### Debugging with `feed_debug.log`
+
+If you set `log_level=2`, the manager will append every single ticker ingestion event to `feed_debug.log`.
+*   **Format:** `[HH:MM:SS] Ingest {SYMBOL}: Last={...} Bid={...} Ask={...}`
+*   **Warning:** This file grows very fast. Only use for short debugging sessions.

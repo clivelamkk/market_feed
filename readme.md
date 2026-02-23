@@ -1,104 +1,96 @@
-# Market Feed
+# Market Feed (Python)
 
-A robust, modular data feed engine for financial markets. It normalizes real-time WebSocket data and HTTP snapshots from multiple exchanges and sources (e.g., Deribit, Bloomberg) into a unified format for trading applications.
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Key Benefits
-- **Multi-Source Unification:** Seamlessly manage and aggregate data from different exchanges and data providers through a single, consistent interface.
-- **High Performance:** Engineered for real-time trading systems, using a hybrid approach of initial REST snapshots for speed and persistent WebSockets for low-latency updates.
-- **Resilient and Fault-Tolerant:** Automatically handles connections, disconnections, and reconnections, ensuring your application continues to receive data even in unstable network conditions.
-- **Easy to Configure and Use:** Get started quickly with a simple configuration. The `FeedManager` handles the complexity of threading, data normalization, and state management.
+A high-performance, thread-safe market data aggregator for financial applications. It seamlessly unifies data from cryptocurrency exchanges (Deribit) and traditional finance terminals (Bloomberg) into a single, normalized stream.
 
-## Documentation
-- **[User Guide](USER_GUIDE.md):** Detailed documentation on all functions, methods, and configurations for end-users.
-- **[Developer Guide](DEVELOPER_GUIDE.md):** In-depth explanation of the architecture, code structure, and process flows for developers and contributors.
+This library is designed for algorithmic trading systems, quantitative research tools, and real-time dashboards that require a reliable "source of truth" for market prices.
+
+## Key Features
+
+*   **Unified API:** Treat Deribit Bitcoin options and SPY equity options exactly the same.
+*   **Thread-Safe:** Safe to use in multi-threaded GUI or calculation engines. Returns immutable snapshots.
+*   **Hybrid Architecture:** Combines REST (for bootstrapping full option chains) and WebSockets (for low-latency updates).
+*   **Resilient:** Automatic reconnection handling for WebSocket feeds.
+*   **Bloomberg Integration:** Native support for `blpapi` with intelligent symbol mapping (e.g., `SPY-20FEB26-500-C` -> `SPY US 02/20/26 C500 Equity`).
 
 ## Installation
 
 ### Standard Installation
-You can install the package directly from the GitHub repository:
-```bash
-pip install git+https://github.com/clivelamkk/market_feed.git
-```
 
-### For Local Development
-If you plan to contribute to the project or need to make local modifications, clone the repository and install it in "editable" mode:
+Clone the repository and install the package in editable mode:
+
 ```bash
-git clone https://github.com/clivelamkk/market_feed.git
+git clone https://github.com/market_feed/market_feed.git
 cd market_feed
 pip install -e .
 ```
 
-### Updating the Package
-To update to the latest version, use the `--upgrade` flag with pip:
+Or install dependencies directly:
+
 ```bash
-pip install --upgrade git+https://github.com/clivelamkk/market_feed.git
+pip install -r requirements.txt
 ```
 
-## Optional Dependencies
+### Bloomberg Support (Optional)
 
-### Bloomberg `blpapi`
-To connect to Bloomberg as a data source, you must have the `blpapi` library installed. This is an optional dependency and is only required if you intend to use the Bloomberg adapter.
+If you intend to use the Bloomberg adapter, you must install the `blpapi` package. This requires a valid Bloomberg Terminal login and the Desktop API (DAPI) to be running on your machine.
 
-**Requirements:**
-- A licensed Bloomberg Terminal with a valid login.
-- The Bloomberg Desktop API must be installed and running.
+**Note:** The standard `pip install blpapi` often fails because the package is hosted on Bloomberg's own repository. Use the following command:
 
-**Installation:**
-Install the `blpapi` library using the official Bloomberg repository URL:
 ```bash
 pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple blpapi
 ```
 
-## Basic Usage
+## Quick Start
 
 ```python
+import time
 from market_feed import FeedManager
 
-# 1. Initialize the Manager
-# The manager can load API keys from a 'keys.json' file or from a dictionary.
-feed = FeedManager(keys_path="keys.json")
+# 1. Initialize the Feed Manager
+# keys_path is optional if using Bloomberg or public data
+feed = FeedManager(keys_path="keys.json", log_level=1)
 
-# 2. Register the markets you want to track
-# This example sets up a feed for BTC (coin-settled) from Deribit.
-btc_config = {
-    "register_name": "BTC_Deribit",
-    "base_symbol": "BTC",
-    "settlement": "coin",
-    "source": "deribit"
-}
-feed.register_market(btc_config)
+# 2. Register a Market (e.g., Deribit BTC Options)
+feed.register_market({
+    'register_name': 'BTC_Options',
+    'source': 'deribit',
+    'base_symbol': 'BTC',
+    'settlement': 'coin' # 'coin' (Inverse) or 'usd' (Linear)
+})
 
-# If you have Bloomberg configured, you can also add a feed for an equity like SPY.
-spy_config = {
-    "register_name": "SPY_BBG",
-    "base_symbol": "SPY",
-    "settlement": "usd",
-    "source": "bloomberg"
-}
-feed.register_market(spy_config)
-
-
-# 3. Start the data stream
-# This will initiate all connections in the background.
+# 3. Start the Feed
 feed.start_stream()
 
-# 4. Access normalized market data
-# The get_snapshot() method provides a unified view of the market.
-import time
-time.sleep(5) # Allow some time for data to arrive
-snapshot = feed.get_snapshot()
-
-print("--- Index Prices ---")
-for symbol, price in snapshot.index_prices.items():
-    print(f"{symbol}: {price}")
-
-print("\n--- Tickers ---")
-for symbol, ticker_data in snapshot.tickers.items():
-    print(f"{symbol}: Bid={ticker_data.get('best_bid_price', 'N/A')}, Ask={ticker_data.get('best_ask_price', 'N/A')}")
-
-# 5. Stop the stream when done
-feed.stop_stream()
+try:
+    while True:
+        # 4. Get a Thread-Safe Snapshot
+        snapshot = feed.get_snapshot()
+        
+        if snapshot.is_ready:
+            btc_price = snapshot.index_prices.get('BTC-PERPETUAL', 0)
+            print(f"Current BTC Price: {btc_price}")
+            
+            # Access normalized ticker data
+            # snapshot.tickers is a dict keyed by instrument name
+            # e.g., 'BTC-29DEC23-30000-C'
+            
+        time.sleep(1)
+except KeyboardInterrupt:
+    feed.stop_stream()
 ```
 
+## Documentation
+
+*   **[User Guide](USER_GUIDE.md):** Detailed documentation of all functions, configuration options, and data structures. Read this to learn how to use the library in your application.
+*   **[Developer Guide](DEVELOPER_GUIDE.md):** Architecture overview, code breakdown, and guide for contributors who want to extend the library (e.g., adding a new exchange adapter).
+
+## Contributing
+
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
 ## License
-This project is licensed under the MIT License. See the [LICENSE.md](LICENSE.md) file for details.
+
+[MIT](https://choosealicense.com/licenses/mit/)
