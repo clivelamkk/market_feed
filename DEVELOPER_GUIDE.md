@@ -13,7 +13,7 @@ The `market_feed` library is a **multi-threaded market data aggregator**. It con
 ```mermaid
 graph TD
     UserApp[User Application] -->|1. calls get_snapshot| FeedManager
-    UserApp -->|2. calls register_market| FeedManager
+    UserApp -->|2. calls register_adapter/underlying| FeedManager
     
     subgraph "Market Feed Library"
         FeedManager[FeedManager]
@@ -73,14 +73,21 @@ This is the most complex file. It orchestrates the entire system.
     *   **Action:** Initializes the `threading.Lock()` and the empty state dictionaries (`_tickers`, `_index_prices`).
     *   **Why:** The lock is critical. Without it, an adapter might write to `_tickers` while the user is reading it, causing a crash.
 
-2.  **`register_market(feed_config)`**:
-    *   **Action:**
-        1.  Checks if an adapter for the requested source (e.g., "deribit:account1") exists. If not, creates it.
-        2.  **Bootstraps:** Calls `adapter.get_option_chain()` to populate the list of tradable instruments.
-        3.  **Bootstraps:** Calls `adapter.get_latest_price()` for reference tickers (like BTC-PERPETUAL) to set initial index prices.
-    *   **Expected Outcome:** After this runs, the `FeedManager` knows *what* instruments exist, but isn't receiving live updates for them yet.
+2.  **`register_adapter(source, account)`**:
+    *   **Action:** Checks if an adapter for the requested source (e.g., "deribit:account1") exists. If not, creates it.
+    *   **Why:** Decouples connection logic from market registration. Handles "Initialization/Connection".
 
-3.  **`ingest_ticker(raw_data)`**:
+3.  **`register_market(feed_config)`**:
+    *   **Action:**
+        1.  Verifies adapter exists.
+        2.  Updates internal configuration dictionaries.
+    *   **Why:** Handles "Telling the Manager we are interested". Pure configuration registration. Does NOT subscribe automatically.
+
+4.  **`initialize_option_chain(register_name)`**:
+    *   **Action:** Calls `adapter.get_option_chain()` to populate the list of tradable instruments (`_instruments_by_undl`).
+    *   **Why:** Separates the expensive instrument fetch from the connection logic.
+
+5.  **`ingest_ticker(raw_data)`**:
     *   **Action:** The *single point of entry* for data.
         1.  Acquires `self._lock`.
         2.  Finds the existing ticker record (or creates one).
@@ -88,7 +95,7 @@ This is the most complex file. It orchestrates the entire system.
         4.  Releases `self._lock`.
     *   **Why:** Merging is crucial because many WebSocket feeds send "diffs" (only changed fields) to save bandwidth.
 
-4.  **`get_subscription_map(...)`**:
+6.  **`get_subscription_map(...)`**:
     *   **Action:** Calculates which instruments *should* be subscribed to based on filters (e.g., "Only strikes between $50k and $60k").
     *   **Why:** Subscribing to *everything* is too expensive (bandwidth/CPU). This allows smart filtering.
 
@@ -121,14 +128,16 @@ Handles the complexity of the Bloomberg Desktop API (`blpapi`).
 
 ## 3. Data Flow Scenarios
 
-### Scenario 1: Startup & Registration
-1.  **User** calls `manager.register_market({'source': 'deribit', 'base_symbol': 'BTC'})`.
-2.  **Manager** checks for existing Deribit adapter. (Creates one if missing).
-3.  **Manager** calls `DeribitAdapter.get_option_chain()`.
-4.  **Adapter** performs HTTP GET to Deribit. Returns list of 1000+ options.
-5.  **Manager** stores these in `self._instruments_by_undl`.
-6.  **Manager** calls `adapter.start()`.
-7.  **Adapter** spawns a background thread and opens WebSocket connection.
+### Scenario 1: Startup & Registration (Verbose)
+1.  **User** calls `manager.register_adapter('deribit')`. Manager creates adapter.
+2.  **User** calls `manager.register_market({'base_symbol': 'BTC', ...})`.
+3.  **User** calls `manager.subscribe_custom('deribit', ['BTC-PERPETUAL'])`.
+4.  **Manager** calls `adapter.subscribe(...)` to ensure data flow.
+5.  **User (Optional)** calls `manager.initialize_option_chain('BTC')`.
+6.  **Adapter** performs HTTP GET to Deribit. Returns list of 1000+ options.
+7.  **Manager** stores these in `self._instruments_by_undl`.
+8.  **User** calls `start_stream()`, which triggers `adapter.start()`.
+9.  **Adapter** spawns a background thread and opens WebSocket connection.
 
 ### Scenario 2: Real-Time Update
 1.  **Exchange** sends WebSocket frame: `{"instrument_name": "BTC-29DEC23-50000-C", "last_price": 0.05}`.
@@ -156,7 +165,7 @@ Handles the complexity of the Bloomberg Desktop API (`blpapi`).
     *   `get_option_chain`: Call Binance API to get list of symbols.
     *   `subscribe`: Send `{ method: "SUBSCRIBE", params: [...] }`.
     *   `start`: Setup WebSocket connection (use `websocket-client` or `aiohttp`).
-4.  **Register:** In `manager.py`, inside `_get_or_create_adapter`, add a generic `elif source == 'binance':` block to instantiate your new class.
+4.  **Register:** In `manager.py`, inside `register_adapter`, add a generic `elif source == 'binance':` block to instantiate your new class.
 
 ### Adding New Data Fields
 

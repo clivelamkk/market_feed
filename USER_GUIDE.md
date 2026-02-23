@@ -30,16 +30,31 @@ feed = FeedManager(keys_path="keys.json", api_keys=None, log_level=0)
 
 ### Core Methods
 
+#### `register_adapter(source: str, account: str = 'default') -> ExchangeAdapter`
+
+Explicitly creates or retrieves an adapter for a given source/account.
+
+*   **Use Case:** Creates and initializes the connection logic. It is the first step in the "Initialization/Connection" workflow.
+*   **Arguments:**
+    *   `source`: 'deribit', 'bloomberg', etc.
+    *   `account`: The account identifier from `keys.json`. Defaults to `'default'`.
+
 #### `register_market(feed_config: dict)`
 
-Tells the manager to prepare a connection for a specific market sector (e.g., "BTC Options on Deribit").
+Tells the FeedManager about a market configuration (e.g., BTC, SPY).
 
-*   **Behavior:**
-    1.  Validates the configuration.
-    2.  Initializes the appropriate adapter (Deribit, Bloomberg, etc.) if not already active.
-    3.  **Bootstraps Data:** Synchronously fetches the full list of instruments (Option Chain) and initial reference prices via HTTP. This ensures you have a complete "map" of the market before the first tick arrives.
-    4.  If `start_stream()` was already called, the new adapter starts immediately.
+*   **Prerequisite:** You MUST call `register_adapter` for the corresponding source/account first.
+*   **Behavior:** Updates internal configuration only. Does NOT automatically subscribe.
+*   **Next Steps:** You must manually call `subscribe_custom()` to start receiving data for the underlying tickers.
 *   **Arguments:** `feed_config` (See [Section 2](#2-configuration-dictionaries)).
+
+#### `initialize_option_chain(register_name: str)`
+
+Explicitly fetches the full option chain for a registered underlying.
+
+*   **Use Case:** Call this if you need the full list of option instruments (e.g., for a strike selector or chain visualization).
+*   **Behavior:** Performs a synchronous HTTP request to the exchange to download all active instruments for the underlying.
+*   **Arguments:** `register_name` (The unique ID provided in `register_market`).
 
 #### `start_stream()`
 
@@ -142,7 +157,7 @@ A fast lookup for the "Spot" or "Index" price of the underlyings.
 
 ### `instruments_by_undl` (Dict[str, List[dict]])
 
-A static map of the "Universe". This is populated during the `register_market` bootstrap phase. It lists *all* available instruments, even if you haven't subscribed to their price updates yet.
+A static map of the "Universe". This is populated during the `initialize_option_chain` phase. It lists *all* available instruments, even if you haven't subscribed to their price updates yet.
 
 **Use Case:** Use this to populate a "Strike Selector" dropdown in your UI.
 

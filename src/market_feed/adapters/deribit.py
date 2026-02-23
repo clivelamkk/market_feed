@@ -100,21 +100,6 @@ class DeribitAdapter(ExchangeAdapter):
             pass
         return 0.0
 
-    def get_reference_tickers(self, undl_config) -> list:
-        base = undl_config['base_symbol']
-        is_usd = undl_config['settlement'] == 'usd'
-        
-        tickers = []
-        if is_usd:
-            # For USD settlement, we watch the USDC Pair and Linear Perp
-            tickers = [f"{base}_USDC", f"{base}_USDC-PERPETUAL"]
-        else:
-            # For Coin settlement, we watch the Inverse Perp and maybe USD index
-            tickers = [f"{base}-PERPETUAL", f"{base}_USDC"]
-            
-        # Return internal names if available
-        return [self.reverse_map.get(t, t) for t in tickers]
-    
     def subscribe(self, instruments: list):
         # We format the channel strings here, specific to Deribit
         # Map Internal Code (BTC) -> External Code (BTC_USDC)

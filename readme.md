@@ -54,20 +54,28 @@ from market_feed import FeedManager
 # keys_path is optional if using Bloomberg or public data
 feed = FeedManager(keys_path="keys.json", log_level=1)
 
-# 2. Register a Market (e.g., Deribit BTC Options)
+# 2. Register Adapter & Underlying Interest
+feed.register_adapter('deribit')
 feed.register_market({
     'register_name': 'BTC_Options',
-    'source': 'deribit',
     'base_symbol': 'BTC',
-    'settlement': 'coin' # 'coin' (Inverse) or 'usd' (Linear)
+    'source': 'deribit',
+    'settlement': 'coin'
 })
 
-# 3. Start the Feed
+# 3. Subscribe to Reference Tickers (Manual Step)
+# Unlike the old register_underlying, you must now explicitly tell the feed what to watch.
+feed.subscribe_custom('deribit', ['BTC-PERPETUAL', 'BTC_USDC'])
+
+# Optional: If you need the full option chain data immediately:
+# feed.initialize_option_chain('BTC_Options')
+
+# 4. Start the Feed
 feed.start_stream()
 
 try:
     while True:
-        # 4. Get a Thread-Safe Snapshot
+        # 5. Get a Thread-Safe Snapshot
         snapshot = feed.get_snapshot()
         
         if snapshot.is_ready:

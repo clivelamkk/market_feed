@@ -107,10 +107,6 @@ class BloombergAdapter(ExchangeAdapter):
         self._stop_event.set()
         if self.session: self.session.stop()
 
-    def get_reference_tickers(self, undl_config) -> list:
-        # Keep it clean: The Manager expects "SPX" or "SPY", not "SPX US Equity"
-        return [undl_config['base_symbol']]
-
     def get_latest_price(self, instrument_name: str) -> float:
         """
         Fetches price for 'SPY' or 'SPY-20FEB...' but handles the conversion internally.

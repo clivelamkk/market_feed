@@ -52,12 +52,3 @@ class ExchangeAdapter(ABC):
     def subscribe(self, channels: List[str]):
         """Send a subscription command to the exchange."""
         pass
-
-    @abstractmethod
-    def get_reference_tickers(self, undl_config) -> List[str]:
-        """
-        Returns a list of symbols (Index, Spot, Perp) that serve as 
-        the underlying price reference for a given undl configuration.
-        Example: ['BTC-PERPETUAL', 'BTC_USDC']
-        """
-        pass

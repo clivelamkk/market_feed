@@ -52,66 +52,13 @@ class FeedManager:
 
 
 
-    def register_market(self, feed_config: dict):
+    def register_adapter(self, source: str, account: str = 'default') -> Optional[ExchangeAdapter]:
         """
-        Registers a new market/feed configuration. This is the primary method
-        for defining what data you want to receive. It will create and manage
-        the necessary adapter based on the config.
-
-        Args:
-            feed_config (dict): A dictionary containing feed settings.
-                Example: {
-                    'register_name': 'BTC_Options_Account1',
-                    'source': 'deribit',
-                    'account': 'account_1',  // <-- Optional, 'default' is used if omitted
-                    'base_symbol': 'BTC',
-                    'settlement': 'coin'
-                }
+        Explicitly creates or retrieves an adapter for a given source/account.
+        Useful if you want to initialize the connection without registering a specific market.
         """
-        register_name = feed_config.get('register_name')
-        if not register_name:
-            print("[FeedManager] Error: 'register_name' is required in feed_config.")
-            return
-
-        # 1. Get or Create Adapter
-        adapter = self._get_or_create_adapter(feed_config)
-        if not adapter:
-            source = feed_config.get('source', 'deribit')
-            print(f"[FeedManager] Error: Adapter for source '{source}' could not be initialized.")
-            return
-
-        # 2. Update Internal State
-        with self._lock:
-            self._market_config.append(feed_config)
-            if register_name not in self._instruments_by_undl:
-                self._instruments_by_undl[register_name] = []
-                self._instrument_sets[register_name] = set()
-
-        # 3. Bootstrap Data for this specific feed
-        print(f"[FeedManager] Bootstrapping feed for {register_name} ({adapter.name})...")
-        instruments = adapter.get_option_chain(feed_config)
-        with self._lock:
-            for inst in instruments:
-                nm = inst['instrument_name']
-                if nm not in self._instrument_sets[register_name]:
-                    self._instrument_sets[register_name].add(nm)
-                    self._instruments_by_undl[register_name].append(inst)
-
-        # Bootstrap Prices (Reference Tickers)
-        tickers = adapter.get_reference_tickers(feed_config)
-        for t in tickers:
-            px = adapter.get_latest_price(t)
-            if px > 0:
-                with self._lock: self._index_prices[t] = px
-                print(f"[FeedManager] Bootstrapped {t}: {px}")
-
-        # 4. If manager is already running, start the new adapter immediately
-        if self.running and not adapter.is_alive():
-            adapter.start()
-
-    def _get_or_create_adapter(self, feed_config: dict) -> Optional[ExchangeAdapter]:
-        source = feed_config.get('source', 'deribit').lower()
-        account = feed_config.get('account', 'default').lower()
+        source = source.lower()
+        account = account.lower()
         adapter_key = f"{source}:{account}"
 
         if adapter_key in self.adapters:
@@ -149,10 +96,75 @@ class FeedManager:
         
         if adapter:
             self.adapters[adapter_key] = adapter
+            # Auto-start if manager is already running
+            if self.running and not adapter.is_alive():
+                adapter.start()
         
         return adapter
 
-    def get_subscription_map(self, register_name, target_dates, min_pct, max_pct):
+    def register_market(self, feed_config: dict):
+        """
+        Registers a market configuration with the FeedManager.
+        This enables subsequent calls like initialize_option_chain() or get_subscription_map().
+        
+        Note: This does NOT automatically subscribe to any tickers.
+        You must manually call subscribe_custom() for the underlying/reference tickers you want.
+        """
+        register_name = feed_config.get('register_name')
+        if not register_name:
+            print("[FeedManager] Error: 'register_name' is required in feed_config.")
+            return
+
+        source = feed_config.get('source', 'deribit').lower()
+        account = feed_config.get('account', 'default').lower()
+        adapter_key = f"{source}:{account}"
+        adapter = self.adapters.get(adapter_key)
+
+        if not adapter:
+            print(f"[FeedManager] Error: Cannot register market '{register_name}'. Adapter '{adapter_key}' not found. Call register_adapter() first.")
+            return
+
+        # Update Internal State
+        with self._lock:
+            self._market_config.append(feed_config)
+            if register_name not in self._instruments_by_undl:
+                self._instruments_by_undl[register_name] = []
+                self._instrument_sets[register_name] = set()
+
+        print(f"[FeedManager] Market '{register_name}' registered on {adapter.name}. Ready for manual subscription.")
+
+    def initialize_option_chain(self, register_name: str):
+        """
+        Explicitly fetches the full option chain for a registered underlying.
+        Call this after register_underlying() if you need option data.
+        """
+        # Find config by register_name
+        cfg = next((c for c in self._market_config if c['register_name'] == register_name), None)
+        if not cfg:
+            print(f"[FeedManager] Error: Underlying '{register_name}' not found. Call register_underlying() first.")
+            return
+
+        source = cfg.get('source', 'deribit').lower()
+        account = cfg.get('account', 'default').lower()
+        adapter_key = f"{source}:{account}"
+        adapter = self.adapters.get(adapter_key)
+        
+        if not adapter: return
+
+        print(f"[FeedManager] Fetching option chain for {register_name}...")
+        instruments = adapter.get_option_chain(cfg)
+        
+        with self._lock:
+            count = 0
+            for inst in instruments:
+                nm = inst['instrument_name']
+                if nm not in self._instrument_sets[register_name]:
+                    self._instrument_sets[register_name].add(nm)
+                    self._instruments_by_undl[register_name].append(inst)
+                    count += 1
+            print(f"[FeedManager] Loaded {count} instruments for {register_name}")
+
+    def get_subscription_map(self, register_name, target_dates, min_pct, max_pct, spot_price):
         cfg = next((c for c in self._market_config if c['register_name'] == register_name), None)
         if not cfg: return {}
         
@@ -163,26 +175,13 @@ class FeedManager:
         if not adapter: return {}
 
         # --- GENERIC LOGIC START ---
-        # Ask adapter: "What are the reference tickers for this underlying?"
-        ref_tickers = adapter.get_reference_tickers(cfg)
-        
         with self._lock:
-            # Try to find a valid spot price from the reference list
-            spot = 0
-            for t in ref_tickers:
-                spot = self._index_prices.get(t, 0)
-                if spot > 0: break
-            
-            if spot == 0: return {}
+            if spot_price <= 0: return {}
 
-            lo = spot * (1 + min_pct / 100)
-            hi = spot * (1 + max_pct / 100)
+            lo = spot_price * (1 + min_pct / 100)
+            hi = spot_price * (1 + max_pct / 100)
             
-            # Start subscription list with the reference tickers
-            # (Note: Adapter specific prefix 'ticker.' is still here, 
-            # ideally that should also be in adapter, but this is acceptable for now)
-            # subs_to_send = [f"ticker.{t}.100ms" for t in ref_tickers]
-            subs_to_send = list(ref_tickers)
+            subs_to_send = []
             structure = {}
 
             for inst in self._instruments_by_undl.get(register_name, []):
@@ -200,12 +199,11 @@ class FeedManager:
                         structure[date]['strikes'].append(k)
                     
                     structure[date]['map'][k][kind] = nm
-                    # subs_to_send.append(f"ticker.{nm}.100ms")
                     subs_to_send.append(nm)
 
             for d in structure: structure[d]['strikes'].sort()
             
-            if adapter.connected:
+            if adapter.connected and subs_to_send:
                 adapter.subscribe(subs_to_send)
             
             return structure

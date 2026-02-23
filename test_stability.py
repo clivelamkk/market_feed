@@ -30,8 +30,32 @@ importlib.reload(market_feed.adapters.bloomberg)
 importlib.reload(market_feed.manager)
 from market_feed import FeedManager
 
-print("✅ Environment Ready (Modules Reloaded).")
+print("[OK] Environment Ready (Modules Reloaded).")
 
+def get_local_reference_tickers(config):
+    """
+    Local helper to determine reference tickers based on configuration.
+    Replacing the adapter method as this is now user-space logic.
+    """
+    base = config['base_symbol']
+    source = config.get('source', '').lower()
+    
+    if source == 'deribit':
+        is_usd = config.get('settlement') == 'usd'
+        if is_usd:
+            # For USD settlement (Linear)
+            # Internal names based on feed_instruments.csv convention (if any)
+            # Or just raw external names if no mapping exists
+            return [f"{base}.USDC", f"{base}_USDC-PERPETUAL"]
+        else:
+            # Coin settlement (Inverse)
+            # Internal names: BTC.PERP -> BTC-PERPETUAL, BTC -> BTC_USDC
+            return [f"{base}.PERP", base]
+            
+    elif source == 'bloomberg':
+        return [base]
+        
+    return []
 
 def find_and_subscribe_options(manager, undl_name, min_days=3):
     """
@@ -47,10 +71,10 @@ def find_and_subscribe_options(manager, undl_name, min_days=3):
     adapter = manager.adapters.get(adapter_key)
 
     if not adapter:
-        print(f"   ⚠️ Could not find adapter for {adapter_key}. Skipping options.")
+        print(f"   [WARN] Could not find adapter for {adapter_key}. Skipping options.")
         return []
 
-    ref_tickers = adapter.get_reference_tickers(cfg)
+    ref_tickers = get_local_reference_tickers(cfg)
     
     # 1. Get Spot Price (from cache or REST)
     spot_price = 0
@@ -70,13 +94,13 @@ def find_and_subscribe_options(manager, undl_name, min_days=3):
             break
     
     if spot_price == 0:
-        print(f"   ⚠️ Could not determine spot price for {undl_name}. Skipping options.")
+        print(f"   [WARN] Could not determine spot price for {undl_name}. Skipping options.")
         return []
 
     # 2. Get Full Chain Details (Once)
     options_data = manager.get_option_chain_details(undl_name)
     if not options_data:
-        print(f"   ⚠️ No options found for {undl_name}.")
+        print(f"   [WARN] No options found for {undl_name}.")
         return []
 
     # 3. Find Target Expiry (Min 3 days, but shortest)
@@ -98,7 +122,7 @@ def find_and_subscribe_options(manager, undl_name, min_days=3):
             pass
             
     if not valid_expiries:
-        print(f"   ⚠️ No expiry found >= {min_days} days for {undl_name}.")
+        print(f"   [WARN] No expiry found >= {min_days} days for {undl_name}.")
         return []
         
     # Sort by date and pick the first (shortest)
@@ -136,30 +160,38 @@ def find_and_subscribe_options(manager, undl_name, min_days=3):
 # --- CONFIGURATION ---
 # Keys path can be None if using public data or existing env vars
 feed = FeedManager(keys_path="keys.json", log_level=2)
-print("✅ FeedManager Initialized (No Config).")
+print("[OK] FeedManager Initialized (No Config).")
 
 active_subscriptions = set()
 
 def activate_feed_stage(config, stage_name):
-    print(f"🚀 ACTIVATING STAGE: {stage_name}")
+    print(f"[INFO] ACTIVATING STAGE: {stage_name}")
     
-    # 1. Add Feed
+    # 1. Register Adapter & Underlying
+    source = config.get('source', 'deribit')
+    account = config.get('account', 'default')
+    
+    feed.register_adapter(source, account)
     feed.register_market(config)
     
-    # 2. Get Ref Tickers & Subscribe IMMEDIATELY
-    source = config.get('source', 'deribit').lower()
-    account = config.get('account', 'default').lower()
-    adapter_key = f"{source}:{account}"
+    # Since we need option data for this script logic:
+    feed.initialize_option_chain(config['register_name'])
+    
+    # 2. Get Ref Tickers & Subscribe (Subscription is MANUAL now)
+    # We still need to get the ref names to add to our "monitor" list
+    source_lower = source.lower()
+    account_lower = account.lower()
+    adapter_key = f"{source_lower}:{account_lower}"
     adapter = feed.adapters.get(adapter_key)
 
     if not adapter:
-        print(f"   ⚠️ Could not find adapter for {adapter_key}. Skipping subscription.")
+        print(f"   [WARN] Could not find adapter for {adapter_key}. Skipping subscription.")
         return
         
-    refs = adapter.get_reference_tickers(config)
+    refs = get_local_reference_tickers(config)
     
     if refs:
-        print(f"   Subscribing to Refs: {refs}")
+        print(f"   Subscribing & Monitoring Refs: {refs}")
         feed.subscribe_custom(source, refs)
         active_subscriptions.update(refs)
     
@@ -251,7 +283,7 @@ try:
     display_monitor(30)
 
 except KeyboardInterrupt:
-    print("🛑 Interrupted by user.")
+    print("[STOP] Interrupted by user.")
 finally:
     feed.stop_stream()
-    print("✅ Feed Stopped.")
+    print("[OK] Feed Stopped.")
