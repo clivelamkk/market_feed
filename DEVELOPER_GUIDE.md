@@ -49,21 +49,11 @@ graph TD
 
 ## 2. Codebase Walkthrough
 
-### A. `src/market_feed/base.py` (The Contract)
+## 2. Codebase Walkthrough
 
-This file defines the **Interface** that all parts of the system must agree on.
+### A. `src/market_feed/manager.py` (The Brain)
 
-| Component | Description | Why it's Important |
-| :--- | :--- | :--- |
-| `MarketSnapshot` | A `dataclass` holding a frozen copy of the market state (`tickers`, `index_prices`). | **Thread Safety.** When the user asks for data, we give them a *copy*, not a reference to the live object. This prevents "ConcurrentModificationException" style errors in the user's code. |
-| `ExchangeAdapter` | An Abstract Base Class (`ABC`). | **Polymorphism.** The `FeedManager` treats all exchanges exactly the same. It calls `.start()`, `.subscribe()`, etc., without knowing if it's talking to Deribit or Binance. |
-
-**Key Abstract Methods:**
-*   `start()` / `stop()`: Lifecycle management.
-*   `get_option_chain()`: **Bootstrap step.** Asks "What instruments exist?"
-*   `subscribe()`: **Runtime step.** Asks "Send me updates for these."
-
-### B. `src/market_feed/manager.py` (The Brain)
+**Class:** `FeedManager`
 
 This is the most complex file. It orchestrates the entire system.
 
@@ -99,7 +89,23 @@ This is the most complex file. It orchestrates the entire system.
     *   **Action:** Calculates which instruments *should* be subscribed to based on filters (e.g., "Only strikes between $50k and $60k").
     *   **Why:** Subscribing to *everything* is too expensive (bandwidth/CPU). This allows smart filtering.
 
+### B. `src/market_feed/base.py` (The Contract)
+
+This file defines the **Interface** that all parts of the system must agree on.
+
+| Component | Description | Why it's Important |
+| :--- | :--- | :--- |
+| `MarketSnapshot` | A `dataclass` holding a frozen copy of the market state (`tickers`, `index_prices`). | **Thread Safety.** When the user asks for data, we give them a *copy*, not a reference to the live object. This prevents "ConcurrentModificationException" style errors in the user's code. |
+| `ExchangeAdapter` | An Abstract Base Class (`ABC`). | **Polymorphism.** The `FeedManager` treats all exchanges exactly the same. It calls `.start()`, `.subscribe()`, etc., without knowing if it's talking to Deribit or Binance. |
+
+**Key Abstract Methods:**
+*   `start()` / `stop()`: Lifecycle management.
+*   `get_option_chain()`: **Bootstrap step.** Asks "What instruments exist?"
+*   `subscribe()`: **Runtime step.** Asks "Send me updates for these."
+
 ### C. `src/market_feed/adapters/deribit.py` (The Implementation)
+
+**Class:** `DeribitAdapter` (Inherits from `ExchangeAdapter`)
 
 A concrete example of how to talk to a crypto exchange.
 
@@ -114,6 +120,8 @@ A concrete example of how to talk to a crypto exchange.
     *   **Output:** A list of raw instrument dictionaries.
 
 ### D. `src/market_feed/adapters/bloomberg.py` (The Enterprise Implementation)
+
+**Class:** `BloombergAdapter` (Inherits from `ExchangeAdapter`)
 
 Handles the complexity of the Bloomberg Desktop API (`blpapi`).
 

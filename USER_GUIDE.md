@@ -28,7 +28,7 @@ feed = FeedManager(keys_path="keys.json", api_keys=None, log_level=0)
     *   `1`: Info (Bootstrapping, Connection status).
     *   `2`: Debug (Logs all incoming ticker updates to `feed_debug.log`).
 
-### Core Methods
+### Core Methods (FeedManager Class)
 
 #### `register_adapter(source: str, account: str = 'default') -> ExchangeAdapter`
 
@@ -80,7 +80,7 @@ Manually subscribes to a specific list of instruments on a given source.
     *   `source`: 'deribit', 'bloomberg', etc.
     *   `tickers`: List of symbol strings (e.g., `['BTC-PERPETUAL', 'SPY US Equity']`).
 
-#### `get_subscription_map(register_name, target_dates, min_pct, max_pct)`
+#### `get_subscription_map(register_name, target_dates, min_pct, max_pct, spot_price=None)`
 
 Helper function to generate a filtered list of instruments to subscribe to.
 
@@ -88,6 +88,7 @@ Helper function to generate a filtered list of instruments to subscribe to.
     *   `register_name`: The name used in `register_market`.
     *   `target_dates`: List of expiry strings (e.g., `['29DEC23', '26JAN24']`).
     *   `min_pct` / `max_pct`: Filter strikes based on moneyness (e.g., -10% to +10% from spot).
+    *   `spot_price` (float, optional): The reference spot price. If `None` or `0`, the manager will attempt to guess it from cached data.
 *   **Returns:** A dictionary structure organizing the filtered instruments.
 
 ---

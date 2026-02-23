@@ -164,7 +164,7 @@ class FeedManager:
                     count += 1
             print(f"[FeedManager] Loaded {count} instruments for {register_name}")
 
-    def get_subscription_map(self, register_name, target_dates, min_pct, max_pct, spot_price):
+    def get_subscription_map(self, register_name, target_dates, min_pct, max_pct, spot_price=None):
         cfg = next((c for c in self._market_config if c['register_name'] == register_name), None)
         if not cfg: return {}
         
@@ -175,8 +175,34 @@ class FeedManager:
         if not adapter: return {}
 
         # --- GENERIC LOGIC START ---
+        
+        # 1. Resolve Spot Price (If not provided)
+        if spot_price is None or spot_price <= 0:
+            base = cfg.get('base_symbol')
+            # Try to guess from common internal names or base symbol
+            candidates = [
+                base,
+                f"{base}-PERPETUAL",
+                f"{base}_USDC",
+                f"{base}.PERP", # If internal mapping used
+                f"{base}.USDC"
+            ]
+            with self._lock:
+                for t in candidates:
+                    if not t: continue
+                    # Check Index Price First
+                    price = self._index_prices.get(t, 0)
+                    # Fallback to Last Price
+                    if price <= 0 and t in self._tickers:
+                         price = self._tickers[t].get('last_price', 0)
+                    
+                    if price > 0:
+                        spot_price = price
+                        # print(f"[FeedManager] Guessed spot for {register_name} using {t}: {spot_price}")
+                        break
+        
         with self._lock:
-            if spot_price <= 0: return {}
+            if spot_price is None or spot_price <= 0: return {}
 
             lo = spot_price * (1 + min_pct / 100)
             hi = spot_price * (1 + max_pct / 100)

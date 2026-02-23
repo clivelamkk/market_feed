@@ -164,6 +164,38 @@ print("[OK] FeedManager Initialized (No Config).")
 
 active_subscriptions = set()
 
+def test_subscription_map(manager, register_name):
+    print(f"   [TEST] Testing get_subscription_map for {register_name}...")
+    
+    expiries = manager.get_expiries_for(register_name)
+    if not expiries:
+        print("   [TEST] No expiries found. Skipping.")
+        return
+
+    target_date = expiries[0]
+    
+    # Case A: With explicit spot
+    # We use a dummy spot that should definitely return some strikes if the chain is populated
+    # Let's try to get a rough center from the first available strike if we can't guess, 
+    # but 50000 is okay for BTC, maybe not for ETH.
+    # Let's just use the fallback spot if available to define a "reasonable" explicit spot.
+    
+    # We'll just pass a hardcoded reasonable value for BTC/ETH to ensure it works syntactically
+    dummy_spot = 50000 if 'BTC' in register_name else (2000 if 'ETH' in register_name else 400)
+    
+    m1 = manager.get_subscription_map(register_name, [target_date], -10, 10, spot_price=dummy_spot)
+    count_1 = len(m1.get(target_date, {}).get('strikes', []))
+    print(f"   [TEST] Explicit Spot ({dummy_spot}): Found {count_1} strikes.")
+
+    # Case B: Without explicit spot (Fallback)
+    m2 = manager.get_subscription_map(register_name, [target_date], -5, 5)
+    
+    if m2:
+        strikes = m2.get(target_date, {}).get('strikes', [])
+        print(f"   [TEST] Auto Spot: Found {len(strikes)} strikes around detected spot.")
+    else:
+        print("   [TEST] Auto Spot: Returned empty (Spot likely not ready yet).")
+
 def activate_feed_stage(config, stage_name):
     print(f"[INFO] ACTIVATING STAGE: {stage_name}")
     
@@ -198,6 +230,9 @@ def activate_feed_stage(config, stage_name):
     # 3. Wait a moment for Spot Price to arrive (needed for option selection)
     print("   Waiting 2s for spot data...")
     time.sleep(2)
+    
+    # TEST: Check subscription map logic
+    test_subscription_map(feed, config['register_name'])
     
     # 4. Find & Subscribe to Options
     opts = find_and_subscribe_options(feed, config['register_name'])
