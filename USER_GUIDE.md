@@ -17,12 +17,15 @@ The `FeedManager` is your primary interface. You should typically instantiate on
 ### Initialization
 
 ```python
-feed = FeedManager(keys_path="keys.json", api_keys=None, log_level=0)
+feed = FeedManager(
+    keys_path="keys.json", 
+    instrument_config_path="feed_instruments.csv", 
+    log_level=0
+)
 ```
 
 *   **`keys_path` (str, optional):** Path to a JSON file containing API credentials. Default is `"keys.json"`.
-*   **`api_keys` (dict, optional):** A dictionary of API keys to override the file.
-    *   *Structure:* `{"deribit": {"account_name": {"client_id": "...", "client_secret": "..."}}}`
+*   **`instrument_config_path` (str, optional):** Path to the symbol mapping CSV. Default is `"feed_instruments.csv"`.
 *   **`log_level` (int):** Controls verbosity.
     *   `0`: Silent (Errors only).
     *   `1`: Info (Bootstrapping, Connection status).
@@ -117,10 +120,10 @@ The `feed_config` dictionary is critical for `register_market`.
 
 ### Configuration Files (Static)
 
-The library reads two files from disk to configure adapters and symbol mappings.
+The library relies on two files to configure adapters and symbol mappings. You must provide the path to these files when initializing the `FeedManager`.
 
 #### 1. `keys.json`
-Stores authentication details for exchanges.
+Stores authentication details for exchanges. Pass the path to this file as `keys_path="..."`.
 
 **Format:**
 ```json
@@ -135,20 +138,23 @@ Stores authentication details for exchanges.
 #### 2. `feed_instruments.csv`
 A CSV file that defines **symbol normalization rules**. It maps your internal "clean" symbols to vendor-specific "messy" tickers.
 
-**Location:** Defaults to `feed_instruments.csv` in your working directory. You can override this in `FeedManager(instrument_config_path=...)`.
+**Location:** You must provide the path to this file via the `instrument_config_path` argument in `FeedManager()`.
+*   Example: `feed = FeedManager(instrument_config_path="path/to/my_feed_instruments.csv")`
 
 **Columns:**
 *   `Symbol`: Your internal application symbol (e.g., `BTC`, `SPX`, `TENCENT`).
 *   `[ADAPTER_NAME]`: Column for each adapter (e.g., `bloomberg`, `deribit`).
 
-**Value Prefixes:**
+**Value Prefixes (Specific Meanings):**
 
-| Prefix | Adapter | Description | Example |
+These prefixes instruct the adapter on how to interpret the value in the CSV.
+
+| Prefix | Adapter | Description | Why Use This? |
 | :--- | :--- | :--- | :--- |
-| **`Exact:`** | All | **Literal Mapping.** The value after the colon is used exactly as-is. | `Exact:BTC_USDC` maps `BTC` -> `BTC_USDC` on Deribit. |
-| **`Index`** | Bloomberg | **Index Suffix.** Appends " Index" to the symbol. | `SPX` -> `SPX Index` |
-| **`FuturePrefix`** | Bloomberg | **Future Logic.** Treats the symbol as a generic future prefix. | `ES` -> `ES[M/Z][Year] Index` (Logic handles expiry matching). |
-| *(Empty)* | All | **Default Behavior.** The adapter applies its standard formatting rules. | `SPY` (Bloomberg) -> `SPY US Equity`. |
+| **`Exact:`** | All | **Literal Mapping.** The value after the colon is used exactly as-is by the adapter. | Use when the adapter's default logic fails or when you have a specific ticker code (e.g., `Exact:BTC_USDC`). |
+| **`Index`** | Bloomberg | **Index Suffix.** Appends " Index" to the symbol. | Use for standard indices like SPX, NDX, VIX where the ticker is just the symbol + " Index". |
+| **`FuturePrefix`** | Bloomberg | **Future Logic.** Treats the symbol as a generic future prefix. | Use for futures where the contract code changes by month (e.g., `ES` -> `ESZ3 Index`). The adapter will handle expiration matching. |
+| *(Empty)* | All | **Default Behavior.** The adapter applies its standard formatting rules. | Use for standard equities (e.g., `SPY` -> `SPY US Equity`). |
 
 **Example Content:**
 ```csv

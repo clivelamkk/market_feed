@@ -75,12 +75,13 @@ Defines how internal symbols map to exchange-specific tickers. This allows you t
 
 **Columns:** `Symbol`, `bloomberg`, `deribit` (and other adapters).
 
-**Special Values:**
-*   **`Exact:VALUE`**: Maps the internal symbol to a specific external ticker string.
+**Special Values (Prefixes):**
+*   **`Exact:VALUE`**: **Literal Mapping.** Use this when you need to specify the exact ticker string for the adapter (ignoring default formatting).
     *   *Example:* `BTC` -> `Exact:BTC_USDC` (Deribit)
-*   **`Index`**: (Bloomberg) Appends " Index" to the symbol.
+*   **`Index`**: **Bloomberg Index.** Tells the adapter to append " Index" to the symbol.
     *   *Example:* `SPX` -> `SPX Index`
-*   **`FuturePrefix`**: (Bloomberg) Treats the symbol as a future prefix (e.g., `ES` -> `ESZ3 Index`).
+*   **`FuturePrefix`**: **Bloomberg Future.** Treats the symbol as a generic future root. The adapter will handle expiration matching.
+    *   *Example:* `ES` -> `ESZ3 Index`
 
 **Example:**
 ```csv
@@ -97,8 +98,13 @@ import time
 from market_feed import FeedManager
 
 # 1. Initialize the Feed Manager
-# keys_path is optional if using Bloomberg or public data
-feed = FeedManager(keys_path="keys.json", log_level=1)
+# keys_path: Path to your API credentials file
+# instrument_config_path: Path to your symbol mapping CSV (moved/managed by you)
+feed = FeedManager(
+    keys_path="keys.json", 
+    instrument_config_path="feed_instruments.csv", 
+    log_level=1
+)
 
 # 2. Register Adapter & Underlying Interest
 feed.register_adapter('deribit')
