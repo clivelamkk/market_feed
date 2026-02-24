@@ -9,7 +9,7 @@ from .adapters.deribit import DeribitAdapter
 # from .adapters.bloomberg import BloombergAdapter
 
 class FeedManager:
-    def __init__(self, keys_path="keys.json", api_keys=None, log_level=0):
+    def __init__(self, keys_path="keys.json", instrument_config_path="feed_instruments.csv", log_level=0):
         """
         Initializes the FeedManager. It can manage multiple adapters for the same
         data source, each with its own API key.
@@ -29,10 +29,11 @@ class FeedManager:
 
         Args:
             keys_path (str): Path to keys.json file.
-            api_keys (dict): Optional. A dictionary of API keys. If provided, it overrides `keys_path`.
+            instrument_config_path (str): Path to feed_instruments.csv file.
             log_level (int): 0=None, 1=Spot/Perps Only, 2=All (Options included)
         """
         self.keys_path = keys_path
+        self.instrument_config_path = instrument_config_path
         self.log_level = log_level
         self._lock = threading.Lock()
         
@@ -41,7 +42,7 @@ class FeedManager:
         self._instruments_by_undl: Dict[str, List[dict]] = {}
         self._instrument_sets: Dict[str, set] = {}
         
-        self._keys = api_keys if api_keys is not None else self._load_keys_from_file()
+        self._keys = self._load_keys_from_file()
         self._market_config = []
         self.running = False
         
@@ -73,7 +74,7 @@ class FeedManager:
             account_keys = vendor_keys.get(account, {})
             client_id = account_keys.get("client_id")
             client_secret = account_keys.get("client_secret")
-            adapter = DeribitAdapter(self, client_id, client_secret)
+            adapter = DeribitAdapter(self, client_id, client_secret, instrument_config_path=self.instrument_config_path)
             
         elif source == 'binance':
             vendor_keys = self._keys.get(source, {})
@@ -81,13 +82,13 @@ class FeedManager:
             client_id = account_keys.get("client_id")
             client_secret = account_keys.get("client_secret")
             # from .adapters.binance import BinanceAdapter
-            # adapter = BinanceAdapter(self, client_id, client_secret)
+            # adapter = BinanceAdapter(self, client_id, client_secret, instrument_config_path=self.instrument_config_path)
             print("[FeedManager] Warning: Binance adapter not fully implemented yet.")
 
         elif source == 'bloomberg':
             try:
                 from .adapters.bloomberg import BloombergAdapter
-                adapter = BloombergAdapter(self)
+                adapter = BloombergAdapter(self, instrument_config_path=self.instrument_config_path)
                 print("[FeedManager] Bloomberg Adapter Initialized.")
             except ImportError as e:
                 print(f"[FeedManager] Skipping Bloomberg: {e}")

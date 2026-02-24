@@ -11,8 +11,8 @@ class DeribitAdapter(ExchangeAdapter):
     WS_URL = "wss://www.deribit.com/ws/api/v2"
     HTTP_URL = "https://www.deribit.com/api/v2"
 
-    def __init__(self, manager, api_id, api_secret):
-        super().__init__(manager)
+    def __init__(self, manager, api_id, api_secret, instrument_config_path=None):
+        super().__init__(manager, instrument_config_path)
         self.name = "deribit"
         self.api_id = api_id
         self.api_secret = api_secret
@@ -27,8 +27,10 @@ class DeribitAdapter(ExchangeAdapter):
 
     def _load_config(self):
         """Loads feed_instruments.csv and looks for column 'deribit'."""
-        csv_path = os.path.join(os.path.dirname(__file__), 'feed_instruments.csv')
-        if not os.path.exists(csv_path): return
+        if not self.instrument_config_path or not os.path.exists(self.instrument_config_path):
+             return
+        
+        csv_path = self.instrument_config_path
 
         try:
             with open(csv_path, 'r') as f:

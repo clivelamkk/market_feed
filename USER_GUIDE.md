@@ -93,11 +93,13 @@ Helper function to generate a filtered list of instruments to subscribe to.
 
 ---
 
-## 2. Configuration Dictionaries
+## 2. Configuration
+
+### Configuration Dictionaries (Runtime)
 
 The `feed_config` dictionary is critical for `register_market`.
 
-### Common Fields
+#### Common Fields
 
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
@@ -105,17 +107,58 @@ The `feed_config` dictionary is critical for `register_market`.
 | `source` | str | **Yes** | The adapter to use: `'deribit'`, `'bloomberg'`, `'binance'`. |
 | `base_symbol` | str | **Yes** | The underlying asset symbol (e.g., `'BTC'`, `'ETH'`, `'SPY'`). |
 
-### Source-Specific Fields
+#### Source-Specific Fields
 
-#### Deribit
-*   **`account` (str, optional):** Key into your `keys.json` to select credentials. Default: `'default'`.
-*   **`settlement` (str):**
-    *   `'coin'`: Inverse contracts (e.g., BTC-margined).
-    *   `'usd'`: Linear contracts (e.g., USDC-margined).
+*   **Deribit:**
+    *   `account` (str, optional): Key into your `keys.json`. Default: `'default'`.
+    *   `settlement` (str): `'coin'` (Inverse) or `'usd'` (Linear).
+*   **Bloomberg:**
+    *   `base_symbol`: The root ticker (e.g., `'SPY'`). The adapter will try to find `"SPY US Equity"` or `"SPX Index"`.
 
-#### Bloomberg
-*   **`base_symbol`:** The root ticker (e.g., `'SPY'`, `'SPX'`). The adapter will try to find `"SPY US Equity"` or `"SPX Index"`.
-*   *Note:* Futures options are not yet fully supported as they often have unique underlying codes per expiry.
+### Configuration Files (Static)
+
+The library reads two files from disk to configure adapters and symbol mappings.
+
+#### 1. `keys.json`
+Stores authentication details for exchanges.
+
+**Format:**
+```json
+{
+  "deribit": {
+    "default": { "client_id": "...", "client_secret": "..." },
+    "trading_subaccount": { "client_id": "...", "client_secret": "..." }
+  }
+}
+```
+
+#### 2. `feed_instruments.csv`
+A CSV file that defines **symbol normalization rules**. It maps your internal "clean" symbols to vendor-specific "messy" tickers.
+
+**Location:** Defaults to `feed_instruments.csv` in your working directory. You can override this in `FeedManager(instrument_config_path=...)`.
+
+**Columns:**
+*   `Symbol`: Your internal application symbol (e.g., `BTC`, `SPX`, `TENCENT`).
+*   `[ADAPTER_NAME]`: Column for each adapter (e.g., `bloomberg`, `deribit`).
+
+**Value Prefixes:**
+
+| Prefix | Adapter | Description | Example |
+| :--- | :--- | :--- | :--- |
+| **`Exact:`** | All | **Literal Mapping.** The value after the colon is used exactly as-is. | `Exact:BTC_USDC` maps `BTC` -> `BTC_USDC` on Deribit. |
+| **`Index`** | Bloomberg | **Index Suffix.** Appends " Index" to the symbol. | `SPX` -> `SPX Index` |
+| **`FuturePrefix`** | Bloomberg | **Future Logic.** Treats the symbol as a generic future prefix. | `ES` -> `ES[M/Z][Year] Index` (Logic handles expiry matching). |
+| *(Empty)* | All | **Default Behavior.** The adapter applies its standard formatting rules. | `SPY` (Bloomberg) -> `SPY US Equity`. |
+
+**Example Content:**
+```csv
+Symbol,bloomberg,deribit
+SPX,Index,
+ES,FuturePrefix,
+BTC,Exact:XBTUSD Curncy,Exact:BTC_USDC
+ETH.PERP,Exact:ETHUSD Curncy,Exact:ETH-PERPETUAL
+TENCENT,Exact:0700 HK Equity,
+```
 
 ---
 

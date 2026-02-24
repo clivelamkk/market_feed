@@ -159,7 +159,7 @@ def find_and_subscribe_options(manager, undl_name, min_days=3):
 
 # --- CONFIGURATION ---
 # Keys path can be None if using public data or existing env vars
-feed = FeedManager(keys_path="keys.json", log_level=2)
+feed = FeedManager(keys_path="keys.json", instrument_config_path="feed_instruments.csv", log_level=2)
 print("[OK] FeedManager Initialized (No Config).")
 
 active_subscriptions = set()

@@ -15,8 +15,9 @@ class ExchangeAdapter(ABC):
     """
     The interface that ALL vendors (Deribit, Binance, etc.) must implement.
     """
-    def __init__(self, manager):
+    def __init__(self, manager, instrument_config_path=None):
         self.manager = manager
+        self.instrument_config_path = instrument_config_path
         self.connected = False
 
     def is_alive(self):

@@ -20,8 +20,8 @@ class BloombergAdapter(ExchangeAdapter):
     - Input:  Your App Ticker (SPY-20FEB26-688-C)
     - Output: Bloomberg Ticker (SPY US 02/20/26 C688 Equity)
     """
-    def __init__(self, manager):
-        super().__init__(manager)
+    def __init__(self, manager, instrument_config_path=None):
+        super().__init__(manager, instrument_config_path)
         
         self.name = "bloomberg"
         self.session = None
@@ -68,13 +68,15 @@ class BloombergAdapter(ExchangeAdapter):
 
     def _load_config(self):
         """Loads feed_instruments.csv and looks for column 'bloomberg'."""
-        csv_path = os.path.join(os.path.dirname(__file__), 'feed_instruments.csv')
-        if not os.path.exists(csv_path):
-            # Defaults if file missing
-            self.index_tickers = {"SPX", "NDX", "VIX", "RTY", "HSI", "NKY", "UKX", "CAC", "DAX", "SX5E"}
-            self.future_prefixes = {"ES", "NQ", "YM", "QR", "HI", "NK", "VG", "GX", "JB", "RX", "VX"}
+        
+        # Defaults
+        self.index_tickers = {"SPX", "NDX", "VIX", "RTY", "HSI", "NKY", "UKX", "CAC", "DAX", "SX5E"}
+        self.future_prefixes = {"ES", "NQ", "YM", "QR", "HI", "NK", "VG", "GX", "JB", "RX", "VX"}
+
+        if not self.instrument_config_path or not os.path.exists(self.instrument_config_path):
             return
 
+        csv_path = self.instrument_config_path
         try:
             with open(csv_path, 'r') as f:
                 reader = csv.DictReader(f)

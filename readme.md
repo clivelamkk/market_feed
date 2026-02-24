@@ -44,6 +44,52 @@ If you intend to use the Bloomberg adapter, you must install the `blpapi` packag
 pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple blpapi
 ```
 
+## Configuration Files
+
+The library relies on two optional configuration files in your project root:
+
+### 1. `keys.json` (API Credentials)
+
+Stores API keys for private feeds.
+
+```json
+{
+  "deribit": {
+    "default": {
+      "client_id": "YOUR_ID",
+      "client_secret": "YOUR_SECRET"
+    }
+  },
+  "binance": {
+    "default": {
+        "client_id": "YOUR_KEY",
+        "client_secret": "YOUR_SECRET"
+    }
+  }
+}
+```
+
+### 2. `feed_instruments.csv` (Symbol Mapping)
+
+Defines how internal symbols map to exchange-specific tickers. This allows you to normalize symbols across your application.
+
+**Columns:** `Symbol`, `bloomberg`, `deribit` (and other adapters).
+
+**Special Values:**
+*   **`Exact:VALUE`**: Maps the internal symbol to a specific external ticker string.
+    *   *Example:* `BTC` -> `Exact:BTC_USDC` (Deribit)
+*   **`Index`**: (Bloomberg) Appends " Index" to the symbol.
+    *   *Example:* `SPX` -> `SPX Index`
+*   **`FuturePrefix`**: (Bloomberg) Treats the symbol as a future prefix (e.g., `ES` -> `ESZ3 Index`).
+
+**Example:**
+```csv
+Symbol,bloomberg,deribit
+SPX,Index,
+TENCENT,Exact:0700 HK Equity,
+BTC,Exact:XBTUSD Curncy,Exact:BTC_USDC
+```
+
 ## Quick Start
 
 ```python
