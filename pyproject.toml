@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market_feed"
-version = "0.2.7"
+version = "0.2.8"
 description = "A modular, thread-safe market data aggregator for crypto (Deribit) and traditional finance (Bloomberg)."
 readme = "README.md"
 requires-python = ">=3.9"
