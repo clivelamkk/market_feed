@@ -20,7 +20,7 @@ This library is intended for algorithmic trading systems and research tools that
 
 ### Standard Installation
 
-Clone the repository and install the package in editable mode:
+Install the package:
 
 ```bash
 pip install git+https://github.com/clivelamkk/market_feed.git
