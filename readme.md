@@ -23,15 +23,7 @@ This library is intended for algorithmic trading systems and research tools that
 Clone the repository and install the package in editable mode:
 
 ```bash
-git clone https://github.com/market_feed/market_feed.git
-cd market_feed
-pip install -e .
-```
-
-Or install dependencies directly:
-
-```bash
-pip install -r requirements.txt
+pip install git+https://github.com/clivelamkk/market_feed.git
 ```
 
 ### Bloomberg Support (Optional)
