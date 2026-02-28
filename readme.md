@@ -114,6 +114,9 @@ feed.subscribe_custom('deribit', ['BTC-PERPETUAL', 'BTC_USDC'])
 # Optional: If you need the full option chain data immediately:
 # feed.initialize_option_chain('BTC_Options')
 
+# Optional: To stop receiving updates for all options of a registered market:
+# feed.unsubscribe_options('BTC_Options')
+
 # 4. Start the Feed
 feed.start_stream()
 

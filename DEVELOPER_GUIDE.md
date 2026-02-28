@@ -102,6 +102,7 @@ This file defines the **Interface** that all parts of the system must agree on.
 *   `start()` / `stop()`: Lifecycle management.
 *   `get_option_chain()`: **Bootstrap step.** Asks "What instruments exist?"
 *   `subscribe()`: **Runtime step.** Asks "Send me updates for these."
+*   `unsubscribe()`: **Runtime step.** Asks "Stop sending me updates for these."
 
 ### C. `src/market_feed/adapters/deribit.py` (The Implementation)
 

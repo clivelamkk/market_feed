@@ -122,6 +122,24 @@ class DeribitAdapter(ExchangeAdapter):
             try: self.ws.send(json.dumps(msg))
             except: pass
 
+    def unsubscribe(self, instruments: list):
+        mapped = [self.exact_map.get(i, i) for i in instruments]
+        channels = [f"ticker.{i}.100ms" for i in mapped]
+
+        for c in channels:
+            if c in self.wanted_channels:
+                self.wanted_channels.remove(c)
+
+        if self.connected and self.ws and self.ws.sock and self.ws.sock.connected:
+            msg = {
+                "jsonrpc": "2.0",
+                "method": "public/unsubscribe",
+                "id": 11,
+                "params": {"channels": channels}
+            }
+            try: self.ws.send(json.dumps(msg))
+            except: pass
+
     def _ws_loop(self):
         while not self._stop_event.is_set():
             try:

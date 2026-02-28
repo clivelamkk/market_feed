@@ -256,6 +256,30 @@ class FeedManager:
             print(f"[FeedManager] Error: Default adapter for source '{source}' not initialized. "
                   "Ensure a market from that source has been registered first.")
 
+    def unsubscribe_options(self, register_name: str):
+        """
+        Unsubscribe from all options associated with a given register name.
+        """
+        cfg = next((c for c in self._market_config if c['register_name'] == register_name), None)
+        if not cfg:
+            print(f"[FeedManager] Error: Market '{register_name}' not found.")
+            return
+
+        source = cfg.get('source', 'deribit').lower()
+        account = cfg.get('account', 'default').lower()
+        adapter_key = f"{source}:{account}"
+        adapter = self.adapters.get(adapter_key)
+        
+        if not adapter: return
+
+        with self._lock:
+            instruments = self._instruments_by_undl.get(register_name, [])
+            subs_to_remove = [inst['instrument_name'] for inst in instruments]
+            
+            if adapter.connected and subs_to_remove:
+                adapter.unsubscribe(subs_to_remove)
+                print(f"[FeedManager] Unsubscribed from {len(subs_to_remove)} options for {register_name}.")
+
     def start_stream(self):
         self.running = True
         for a in self.adapters.values(): a.start()

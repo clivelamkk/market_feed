@@ -235,6 +235,32 @@ class BloombergAdapter(ExchangeAdapter):
             else:
                 print(f"[Bloomberg] Session not ready. Queued {count} tickers.")
 
+    def unsubscribe(self, instruments: list):
+        if not HAS_BLPAPI: return
+        
+        subs = blpapi.SubscriptionList()
+        count = 0
+        to_remove = []
+        
+        for app_ticker in instruments:
+            bbg_ticker = self._convert_to_bbg(app_ticker)
+            if bbg_ticker and bbg_ticker in self.active_subscriptions:
+                subs.add(bbg_ticker)
+                to_remove.append(bbg_ticker)
+                
+                if app_ticker in self.pending_subscriptions:
+                    del self.pending_subscriptions[app_ticker]
+                count += 1
+                
+        if count > 0 and self.session:
+            try:
+                print(f"[Bloomberg] Unsubscribing from {count} tickers...")
+                self.session.unsubscribe(subs)
+                for t in to_remove:
+                    self.active_subscriptions.remove(t)
+            except Exception as e:
+                print(f"[Bloomberg] Unsubscribe Failed: {e}")
+
     # --- TRANSLATION LOGIC ---
 
     def _convert_to_bbg(self, name):

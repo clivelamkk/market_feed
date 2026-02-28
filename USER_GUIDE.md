@@ -83,6 +83,13 @@ Manually subscribes to a specific list of instruments on a given source.
     *   `source`: 'deribit', 'bloomberg', etc.
     *   `tickers`: List of symbol strings (e.g., `['BTC-PERPETUAL', 'SPY US Equity']`).
 
+#### `unsubscribe_options(register_name: str)`
+
+Unsubscribes from all options associated with a given registered market.
+
+*   **Use Case:** You want to stop receiving data for a specific option chain to save bandwidth or processing power.
+*   **Arguments:** `register_name` (The unique ID provided in `register_market`).
+
 #### `get_subscription_map(register_name, target_dates, min_pct, max_pct, spot_price=None)`
 
 Helper function to generate a filtered list of instruments to subscribe to.

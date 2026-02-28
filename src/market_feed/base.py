@@ -49,7 +49,22 @@ class ExchangeAdapter(ABC):
         """
         pass
 
-    @abstractmethod
-    def subscribe(self, channels: List[str]):
-        """Send a subscription command to the exchange."""
-        pass
+        @abstractmethod
+
+        def subscribe(self, channels: List[str]):
+
+            """Send a subscription command to the exchange."""
+
+            pass
+
+    
+
+        @abstractmethod
+
+        def unsubscribe(self, channels: List[str]):
+
+            """Send an unsubscribe command to the exchange."""
+
+            pass
+
+    

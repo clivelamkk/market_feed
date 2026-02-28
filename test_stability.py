@@ -292,6 +292,12 @@ try:
     }, "1. BTC (Deribit)")
     display_monitor(15)
 
+    # TEST UNSUBSCRIBE
+    print("\n[TEST] Testing unsubscribe_options for BTC_DERIBIT...")
+    feed.unsubscribe_options("BTC_DERIBIT")
+    print("   Options unsubscribed. Displaying monitor for 10s to verify stability...")
+    display_monitor(10)
+
     # STEP 2: SPY & QQQ
     activate_feed_stage({
         "register_name": "SPY_BBG",
